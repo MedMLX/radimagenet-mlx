@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import cast
 
@@ -36,10 +37,16 @@ def test_resnet50_runner_matches_keras(
     folder = tmp_path / "weights"
     folder.mkdir()
     (folder / "RadImageNet-ResNet50_notop.safetensors").symlink_to(checkpoint)
+    output = tmp_path / "out"
+    output.mkdir()
+    victim = tmp_path / "victim.json"
+    victim.write_text("original", encoding="utf-8")
+    (output / f".{os.getpid()}.{medmlx.FEATURES_JSON}").symlink_to(victim)
     result = medmlx.resnet50(
-        image_path=str(write_png(tmp_path, case)), output_dir=str(tmp_path / "out"),
+        image_path=str(write_png(tmp_path, case)), output_dir=str(output),
         weights_path=str(folder),
     )
+    assert victim.read_text(encoding="utf-8") == "original"
     expected = load_reference(FIXTURES / f"{fixture}.npz")
     outputs = result["outputs"]
     for path, key in ((outputs["features_npy"], "pooled"),

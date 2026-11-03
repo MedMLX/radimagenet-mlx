@@ -16,6 +16,7 @@ import os
 from collections.abc import Callable
 from itertools import combinations
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import cast
 
 import numpy as np
@@ -123,20 +124,17 @@ def _architecture(backbone: Architecture | str | None) -> Architecture | None:
 
 
 def _publish(writes: dict[Path, Callable[[Path], object]]) -> None:
-    """Write each output beside its target, then rename all of them into place.
+    """Stage outputs in a private directory, then rename them into place.
 
     Earlier outputs stay untouched until every new file is complete, and a failed
     write leaves no partial files behind.
     """
-    partials = {path: path.with_name(f".{os.getpid()}.{path.name}") for path in writes}
-    try:
+    with TemporaryDirectory(prefix=".radimagenet-mlx-", dir=next(iter(writes)).parent) as staging:
+        partials = {path: Path(staging) / path.name for path in writes}
         for path, write in writes.items():
             write(partials[path])
         for path, partial in partials.items():
             os.replace(partial, path)
-    finally:
-        for partial in partials.values():
-            partial.unlink(missing_ok=True)
 
 
 def _paths_alias(first: Path, second: Path) -> bool:

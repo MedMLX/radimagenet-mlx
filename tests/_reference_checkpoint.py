@@ -1,4 +1,4 @@
-"""Seeded Keras HDF5 construction shared by fixture generation and tests only."""
+"""Recorded Keras fixture loading and seeded native checkpoint construction for tests."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import json
 from collections.abc import Iterator
 from pathlib import Path
 
-import h5py
 import numpy as np
 
 from radimagenet_mlx._typing import FloatArray, HostArray, ModelConfig, WeightSpec
@@ -22,9 +21,7 @@ def load_reference(path: Path) -> dict[str, HostArray]:
     """Load a qualified upstream recording; never silently skip missing goldens."""
 
     if not path.is_file():
-        raise FileNotFoundError(
-            f"Missing upstream fixture {path}; run scripts/make_keras_fixtures.py"
-        )
+        raise FileNotFoundError(f"Missing upstream fixture {path}")
     with np.load(path, allow_pickle=False) as saved:
         metadata = json.loads(saved["metadata"].item())
         assert metadata["schema_version"] == 3
@@ -58,19 +55,6 @@ def seeded_weights(
         else:
             value = rng.normal(0.0, 0.02, shape)
         yield spec, value.astype(np.float32)
-
-
-def write_checkpoint(
-    path: Path, config: ModelConfig, specs: list[WeightSpec], seed: int,
-    *, normalization_seed: int | None = None,
-) -> None:
-    """Rebuild full FP32 random weights from fixture metadata (no pretrained assets)."""
-    with h5py.File(str(path), "w") as handle:
-        handle.attrs["model_config"] = json.dumps(config)
-        weights = handle.create_group("model_weights")
-        for spec, value in seeded_weights(specs, seed, normalization_seed):
-            group = weights.require_group(spec["layer"]).require_group(spec["layer"])
-            group.create_dataset(spec["key"], data=value)
 
 
 def write_native_checkpoint(

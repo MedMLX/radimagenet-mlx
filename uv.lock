@@ -165,19 +165,6 @@ wheels = [
 ]
 
 [[package]]
-name = "h5py-stubs"
-version = "0.1.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "h5py" },
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/55/a0/65cbd1422dbc6bcccb3c7f11755c44b67e487b01ccd7e098648fdf6bea6a/h5py_stubs-0.1.2.tar.gz", hash = "sha256:f984bf66bc2cce02fd89d91b64dd0489b0014b2e79f2be6dc56f0bf38ef4e759", size = 3074, upload-time = "2025-09-09T16:21:10.37Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/52/b8eea98dd5e9167ed9162a700cdb3040dfcf52e285bd33c548a6fb5f6a8c/h5py_stubs-0.1.2-py3-none-any.whl", hash = "sha256:22899b06f7cfe028ba8eabf9aebee79d6facd0aeaee965e65bc290df1360a5ca", size = 6383, upload-time = "2025-09-09T16:21:09.604Z" },
-]
-
-[[package]]
 name = "hf-xet"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -232,20 +219,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/25/2a/484d112c0d8fc5f665d7b65137ac9cdb2953c982391598c3597968a12ee7/huggingface_hub-1.33.0.tar.gz", hash = "sha256:367be21a201db9523eddf8aeac7048f2602c1b308691c97640d5e72ed188007e", size = 1043548, upload-time = "2026-09-24T09:49:29.971Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fc/16/963096d224b80909432dc16561a615fd33d2d13beef3ce4c63fa25e40867/huggingface_hub-1.33.0-py3-none-any.whl", hash = "sha256:04e434b06e100eddbce9a6e817d72693a7884b10a79bd67ab48080d5c07eb899", size = 846435, upload-time = "2026-09-24T09:49:28.059Z" },
-]
-
-[[package]]
-name = "hypothesis"
-version = "6.169.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "sortedcontainers" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/48/f2/052bded52f99476dda6ffb1da52c2639798197737548820c4afd71862fc7/hypothesis-6.169.3.tar.gz", hash = "sha256:54429f636fe1382ec3b3e85e1a3db9bbd7b4ff23737f2644e62186344d7d8138", size = 510187, upload-time = "2026-10-15T02:34:41.781Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c5/cd/61efdeeb3377f6e381577338c359dc1d65aa3c3c5846703121099b964ec9/hypothesis-6.169.3-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:85453bdb48fcda4b3c03c7da5c715086b3c33b079da14ff91bff282d62e9c47d", size = 786000, upload-time = "2026-10-15T02:32:37.331Z" },
-    { url = "https://files.pythonhosted.org/packages/7b/a5/30fe578b3eadcf35bf105915a9dceddeea415d55388cd361ce8ba10ae445/hypothesis-6.169.3-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:d39f3932812d4cb2d3e623d77a756fd649e82165ad593c16b85ba7bf213d500a", size = 783775, upload-time = "2026-10-15T02:32:43.491Z" },
-    { url = "https://files.pythonhosted.org/packages/2b/8a/ba39d6152188d61b9245991e2c52b8738a1d5a2537ac7f4a2b83d9008b12/hypothesis-6.169.3-cp315-abi3.abi3t-macosx_11_0_arm64.whl", hash = "sha256:a3135710eb4cecb804088ab1cded960c9737f34dcae224c37d5f069ab7827f8d", size = 782029, upload-time = "2026-10-15T02:33:43.594Z" },
 ]
 
 [[package]]
@@ -539,13 +512,9 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
-    { name = "h5py" },
-    { name = "h5py-stubs" },
-    { name = "hypothesis" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
-    { name = "types-tensorflow" },
 ]
 reference = [
     { name = "keras" },
@@ -554,9 +523,6 @@ reference = [
 
 [package.metadata]
 requires-dist = [
-    { name = "h5py", marker = "extra == 'dev'", specifier = ">=3.14,<4" },
-    { name = "h5py-stubs", marker = "extra == 'dev'", specifier = ">=0.1.2" },
-    { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.156,<7" },
     { name = "keras", marker = "extra == 'reference'", specifier = "==3.15.0" },
     { name = "medmlx-core", specifier = "==0.2.6" },
     { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = "==0.32.4" },
@@ -566,7 +532,6 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4,<10" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.13,<1" },
     { name = "tensorflow", marker = "extra == 'reference'", specifier = "==2.20.0" },
-    { name = "types-tensorflow", marker = "extra == 'dev'", specifier = ">=2.18.0.20261006" },
 ]
 provides-extras = ["reference", "dev"]
 
@@ -623,15 +588,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
-]
-
-[[package]]
-name = "sortedcontainers"
-version = "2.4.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e8/c4/ba2f8066cceb6f23394729afe52f3bf7adec04bf9ed2c820b39e19299111/sortedcontainers-2.4.0.tar.gz", hash = "sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88", size = 30594, upload-time = "2021-05-16T22:03:42.897Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl", hash = "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0", size = 29575, upload-time = "2021-05-16T22:03:41.177Z" },
 ]
 
 [[package]]
@@ -709,29 +665,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/0d/ea/b2a5bd54b28a324dae8211928b2d730b6547500342c7e6c6dea08bd0a485/tqdm-4.70.1.tar.gz", hash = "sha256:cefd0eca11b2a37a3aee776544d4f4ae913f02688135b5556b8788dfa474afc4", size = 171846, upload-time = "2026-09-11T07:25:16.601Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/03/921a3d3c75785aca9ebfbfcabfbc3a1be12e2ab5265deb026d55a5a3f83e/tqdm-4.70.1-py3-none-any.whl", hash = "sha256:c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73", size = 80199, upload-time = "2026-09-11T07:25:14.599Z" },
-]
-
-[[package]]
-name = "types-protobuf"
-version = "7.35.1.20260906"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e1/6c/e3e5b3e10bc328126a39637c138f9ebfd734bf14342b9f3540039b4ab995/types_protobuf-7.35.1.20260906.tar.gz", hash = "sha256:efd1a3862d4c967dad5512ef8d56b1530ac84f182c41735b94004756518c4998", size = 69895, upload-time = "2026-09-06T06:35:28.308Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/44/4e/f63e826c68f77ef875506d72f225918800346545ee99847bc28f3394f18d/types_protobuf-7.35.1.20260906-py3-none-any.whl", hash = "sha256:5155e48569e0dabff303fdf578db96cd31ea9a4a63b18018a4ceac6b0ae17462", size = 86419, upload-time = "2026-09-06T06:35:27.247Z" },
-]
-
-[[package]]
-name = "types-tensorflow"
-version = "2.18.0.20261009"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-    { name = "requests" },
-    { name = "types-protobuf" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f6/86/f9b1b1b392c90e06c62b8173f6312514f60e4305d37dfbfdefe916469f4d/types_tensorflow-2.18.0.20261009.tar.gz", hash = "sha256:788b812d0ca2ec38411130a68c0e5e8778c9d9e823da952b7fce66419163bbcc", size = 260888, upload-time = "2026-10-09T08:05:49.09Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f6/a9/e6f82f89d619134282b0a004e17f57c79a90760b24f234efdfebb348e1d3/types_tensorflow-2.18.0.20261009-py3-none-any.whl", hash = "sha256:dce1ba60742e5c4cf94908354d0b6aafd2dc4cbc98162e56c98a71a9bced3f5e", size = 330824, upload-time = "2026-10-09T08:05:47.674Z" },
 ]
 
 [[package]]

@@ -23,18 +23,8 @@ class ArrayRuntime(Protocol):
         ...
 
 
-class RunPaths(TypedDict):
-    image_path: str
-    weights_path: str
-    output_dir: str
-
-
 class LayerConfig(TypedDict):
     epsilon: NotRequired[float]
-
-
-class BatchNormalizationConfig(TypedDict):
-    epsilon: float
 
 
 class Layer(TypedDict):

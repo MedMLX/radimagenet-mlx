@@ -66,12 +66,8 @@ reference = [
 ]
 dev = [
   "pyright==1.1.414",
-  "hypothesis>=6.156,<7",
   "pytest>=8.4,<10",
   "ruff>=0.13,<1",
-  "h5py>=3.14,<4",
-  "h5py-stubs>=0.1.2",
-  "types-tensorflow>=2.18.0.20261006",
 ]
 
 [tool.hatch.metadata]
@@ -99,10 +95,8 @@ extend-select = ["TID251", "TID252", "ANN401"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
-# Optional TensorFlow recorders are checked against the bundled stubs.
-reportMissingModuleSource = "none"
-include = ["scripts","src","tests"]
-extraPaths = ["src", "tests", "scripts"]
+include = ["src", "tests"]
+extraPaths = ["src", "tests"]
 pythonVersion = "3.13"
 typeCheckingMode = "strict"
 enableTypeIgnoreComments = false

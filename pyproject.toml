@@ -70,9 +70,6 @@ dev = [
   "ruff>=0.13,<1",
 ]
 
-[tool.hatch.metadata]
-allow-direct-references = true
-
 [tool.uv]
 constraint-dependencies = ["setuptools>=84.1.0", "filelock>=4.2.1", ]
 environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]

@@ -21,7 +21,14 @@ Extract radiology-image features with native MLX RadImageNet encoders: ResNet50,
 | :--- | :--- |
 | 2D image | Pooled and spatial features |
 
-Weights: one file per backbone, 28 MB (DenseNet121), 87 MB (InceptionV3), 94 MB (ResNet50) or 218 MB (InceptionResNetV2). Peak MLX memory for a 1929×2207 chest radiograph: 0.11 GB (DenseNet121), 0.18 GB (InceptionV3), 0.19 GB (ResNet50) and 0.44 GB (InceptionResNetV2).
+| Backbone | Weights download | Peak MLX memory |
+| :--- | ---: | ---: |
+| DenseNet121 | 28 MB | 0.11 GB |
+| InceptionV3 | 87 MB | 0.18 GB |
+| ResNet50 | 94 MB | 0.19 GB |
+| InceptionResNetV2 | 218 MB | 0.44 GB |
+
+Each backbone downloads its own weights file. Peak memory is for a 1929×2207 chest radiograph.
 
 ## Use with MedMLX
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "radimagenet-mlx"
-version = "0.3.3"
+version = "0.3.4"
 description = "Extract radiology-image features with native MLX RadImageNet encoders"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
@@ -39,7 +39,7 @@ keywords = [
   "inception",
 ]
 dependencies = [
-  "medmlx-core==0.2.6",
+  "medmlx-core>=0.2.6,<0.3",
   "mlx==0.32.4; platform_system == 'Darwin' and platform_machine == 'arm64'",
   "numpy>=2.0,<3",
   "pillow>=13,<14",
@@ -53,7 +53,7 @@ radimagenet-inceptionresnetv2 = "radimagenet_mlx.medmlx:INCEPTIONRESNETV2"
 
 [project.urls]
 Homepage = "https://medmlx.org"
-Documentation = "https://github.com/MedMLX/radimagenet-mlx/blob/v0.3.3/README.md"
+Documentation = "https://github.com/MedMLX/radimagenet-mlx/blob/v0.3.4/README.md"
 Repository = "https://github.com/MedMLX/radimagenet-mlx"
 Issues = "https://github.com/MedMLX/radimagenet-mlx/issues"
 Weights = "https://huggingface.co/MedMLX/radimagenet-mlx"

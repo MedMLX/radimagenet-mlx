@@ -501,7 +501,7 @@ wheels = [
 
 [[package]]
 name = "radimagenet-mlx"
-version = "0.3.3"
+version = "0.3.4"
 source = { editable = "." }
 dependencies = [
     { name = "medmlx-core" },
@@ -524,7 +524,7 @@ reference = [
 [package.metadata]
 requires-dist = [
     { name = "keras", marker = "extra == 'reference'", specifier = "==3.15.0" },
-    { name = "medmlx-core", specifier = "==0.2.6" },
+    { name = "medmlx-core", specifier = ">=0.2.6,<0.3" },
     { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = "==0.32.4" },
     { name = "numpy", specifier = ">=2.0,<3" },
     { name = "pillow", specifier = ">=13,<14" },

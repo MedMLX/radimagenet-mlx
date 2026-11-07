@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from radimagenet_mlx.mlx_model import RadImageNetMlx as RadImageNetMlx
     from radimagenet_mlx.mlx_model import RadImageNetResNet50Mlx as RadImageNetResNet50Mlx
 
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 
 _EXPORTS = {
     "Architecture": "radimagenet_mlx.graph",

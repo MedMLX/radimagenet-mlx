@@ -34,20 +34,29 @@ from radimagenet_mlx.features import POOLED_OUTPUT_LAYER
 from radimagenet_mlx.graph import Architecture
 
 
-def _declaration(model_id: str, label: str, runner: str) -> dict[str, str]:
-    """Build the MedMLX registration for one backbone runner."""
+def _declaration(
+    model_id: str, label: str, runner: str, peak_memory_gb: float,
+) -> dict[str, str | float]:
+    """Build the MedMLX registration for one backbone runner.
+
+    ``peak_memory_gb`` is the measured MLX peak for a 1929x2207 chest radiograph,
+    which MedMLX uses to refuse runs that would not fit in available memory.
+    """
     return {
         "id": model_id, "label": label, "task": "feature-extraction",
         "run": f"radimagenet_mlx.medmlx:{runner}",
         "summary": f"Radiology-pretrained {label} features for one 2D image.",
+        "peak_memory_gb": peak_memory_gb,
     }
 
 
-RESNET50 = _declaration("radimagenet-resnet50", "RadImageNet ResNet50", "resnet50")
-DENSENET121 = _declaration("radimagenet-densenet121", "RadImageNet DenseNet121", "densenet121")
-INCEPTIONV3 = _declaration("radimagenet-inceptionv3", "RadImageNet InceptionV3", "inceptionv3")
+RESNET50 = _declaration("radimagenet-resnet50", "RadImageNet ResNet50", "resnet50", 0.2)
+DENSENET121 = _declaration(
+    "radimagenet-densenet121", "RadImageNet DenseNet121", "densenet121", 0.2,
+)
+INCEPTIONV3 = _declaration("radimagenet-inceptionv3", "RadImageNet InceptionV3", "inceptionv3", 0.2)
 INCEPTIONRESNETV2 = _declaration(
-    "radimagenet-inceptionresnetv2", "RadImageNet InceptionResNetV2", "inceptionresnetv2",
+    "radimagenet-inceptionresnetv2", "RadImageNet InceptionResNetV2", "inceptionresnetv2", 0.5,
 )
 
 

@@ -21,6 +21,8 @@ Extract radiology-image features with native MLX RadImageNet encoders: ResNet50,
 | :--- | :--- |
 | 2D image | Pooled and spatial features |
 
+Weights: one file per backbone, 28 MB (DenseNet121), 87 MB (InceptionV3), 94 MB (ResNet50) or 218 MB (InceptionResNetV2). Peak MLX memory for a 1929×2207 chest radiograph: 0.11 GB (DenseNet121), 0.18 GB (InceptionV3), 0.19 GB (ResNet50) and 0.44 GB (InceptionResNetV2).
+
 ## Use with MedMLX
 
 The [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) is the lowest-friction way to use this package. It installs this runtime, downloads its weights on first use, and lets an AI agent describe, check and run `radimagenet-resnet50`, `radimagenet-densenet121`, `radimagenet-inceptionv3` and `radimagenet-inceptionresnetv2` for you.

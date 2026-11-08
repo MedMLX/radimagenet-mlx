@@ -39,8 +39,8 @@ def _declaration(
 ) -> dict[str, str | float]:
     """Build the MedMLX registration for one backbone runner.
 
-    ``peak_memory_gb`` is the measured MLX peak for a 1929x2207 chest radiograph,
-    which MedMLX uses to refuse runs that would not fit in available memory.
+    ``peak_memory_gb`` is the measured MLX peak for a 1929x2207 chest radiograph.
+    MedMLX reports it next to available memory but never refuses a run on it.
     """
     return {
         "id": model_id, "label": label, "task": "feature-extraction",

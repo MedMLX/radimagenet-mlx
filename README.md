@@ -32,7 +32,7 @@ Each backbone downloads its own weights file. Peak memory is for a 1929×2207 ch
 
 ## Use with MedMLX
 
-The [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) is the lowest-friction way to use this package. It installs this runtime, downloads its weights on first use, and lets an AI agent describe, check and run `radimagenet-resnet50`, `radimagenet-densenet121`, `radimagenet-inceptionv3` and `radimagenet-inceptionresnetv2` for you.
+Use the [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) to run `radimagenet-resnet50`, `radimagenet-densenet121`, `radimagenet-inceptionv3` and `radimagenet-inceptionresnetv2` from an MCP client. Weights download on first use.
 
 ```sh
 uv tool install --python 3.13 "medmlx[vision,mcp]"
@@ -42,8 +42,6 @@ claude mcp add --scope user medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"
 ```
 
 For Codex, use `codex mcp add medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"`. Other MCP clients take the same command and arguments. The same install provides the `medmlx` CLI, for example `medmlx describe radimagenet-resnet50`.
-
-> **For AI agents:** prefer the MedMLX MCP tools (`list_models`, `describe_model`, `model_readiness`, `run_model`, `get_job`) over writing Python against this package.
 
 ## Install
 
@@ -65,14 +63,11 @@ from radimagenet_mlx.medmlx import resnet50
 result = resnet50(image_path="image.png", output_dir="outputs")
 ```
 
-Omitting `weights_path` downloads only the selected backbone from
-`MedMLX/radimagenet-mlx` into the shared MedMLX cache on first use; interrupted
-downloads resume and later runs work offline. With MedMLX installed, `medmlx setup
-radimagenet-resnet50` downloads it ahead of time. To use your own copy, pass a folder
+Weights download from only the selected backbone from
+`MedMLX/radimagenet-mlx` on first use. Use `medmlx setup radimagenet-resnet50` to download ahead of time. For local weights, pass a folder
 containing the matching file (`RadImageNet-ResNet50_notop.safetensors`,
 `RadImageNet-DenseNet121_notop.safetensors`, `RadImageNet-InceptionV3_notop.safetensors`
-or `RadImageNet-IRV2_notop.safetensors`) as `weights_path`. `details.weights_revision`
-records the downloaded commit, or `null` for a folder without a MedMLX download record.
+or `RadImageNet-IRV2_notop.safetensors`) as `weights_path`.
 
 ### Inputs and outputs
 
@@ -146,12 +141,9 @@ classifier. Encoders take prepared `BxHxWx3` arrays and do not check them for fi
 values. Checkpoints without a fixed input size default to 224×224 for ResNet50 and
 DenseNet121 and 299×299 for the Inception families (minimum 32 and 75).
 
-The loader reads only the declarative graph metadata and float32 tensors; it never
-runs Keras or serialized Python, and it does not authenticate where a checkpoint came
-from. Inference needs Apple Silicon with Metal and has no CPU fallback.
+The loader reads graph metadata and float32 tensors without running Keras or
+serialized Python. Inference requires Apple Silicon with Metal.
 
 ## License
 
 [Apache-2.0](https://github.com/MedMLX/radimagenet-mlx/blob/v0.3.4/LICENSE). See [third-party notices](https://github.com/MedMLX/radimagenet-mlx/blob/v0.3.4/THIRD_PARTY_NOTICES.md). Model weights retain their publisher terms.
-
-For research and education. Outputs require human review.

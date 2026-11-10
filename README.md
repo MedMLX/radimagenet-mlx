@@ -21,12 +21,12 @@ Extract radiology-image features with native MLX RadImageNet encoders: ResNet50,
 | :--- | :--- |
 | 2D image | Pooled and spatial features |
 
-| Backbone | Weights download | Peak MLX memory |
-| :--- | ---: | ---: |
-| DenseNet121 | 28 MB | 0.11 GB |
-| InceptionV3 | 87 MB | 0.18 GB |
-| ResNet50 | 94 MB | 0.19 GB |
-| InceptionResNetV2 | 218 MB | 0.44 GB |
+| Model | Backbone | Weights download | Peak MLX memory |
+| :--- | :--- | ---: | ---: |
+| `radimagenet-densenet121` | DenseNet121 | 28 MB | 0.11 GB |
+| `radimagenet-inceptionv3` | InceptionV3 | 87 MB | 0.18 GB |
+| `radimagenet-resnet50` | ResNet50 | 94 MB | 0.19 GB |
+| `radimagenet-inceptionresnetv2` | InceptionResNetV2 | 218 MB | 0.44 GB |
 
 Each backbone downloads its own weights file. Peak memory is for a 1929×2207 chest radiograph.
 
@@ -65,11 +65,9 @@ from radimagenet_mlx.medmlx import resnet50
 result = resnet50(image_path="image.png", output_dir="outputs")
 ```
 
-Weights download from only the selected backbone from
-`MedMLX/radimagenet-mlx` on first use. Use `medmlx setup radimagenet-resnet50` to download ahead of time. For local weights, pass a folder
-containing the matching file (`RadImageNet-ResNet50_notop.safetensors`,
-`RadImageNet-DenseNet121_notop.safetensors`, `RadImageNet-InceptionV3_notop.safetensors`
-or `RadImageNet-IRV2_notop.safetensors`) as `weights_path`.
+Only the selected backbone's weights download from `MedMLX/radimagenet-mlx` on first
+use; `medmlx setup radimagenet-resnet50` downloads them ahead of time. For local weights,
+pass a folder containing the backbone's weights file as `weights_path`.
 
 ### Inputs and outputs
 
@@ -86,17 +84,23 @@ or `RadImageNet-IRV2_notop.safetensors`) as `weights_path`.
 | `spatial_features_npy` | `spatial_features.npy` | float32 `(1, H, W, C)` last spatial map |
 | `features_json` | `features.json` | Run metadata, also returned as `details` |
 
-Pooled widths are 2048 for ResNet50 and InceptionV3, 1024 for DenseNet121 and 1536
-for InceptionResNetV2. The spatial maps are `conv5_block3_out`, `relu`, `mixed10`
-and `conv_7b_ac`. The published checkpoints declare 224×224 inputs, so ResNet50 and
-DenseNet121 give 7×7 maps and the Inception families 5×5. A checkpoint with a
-classifier head also writes `predictions.npy`; the published encoders have none.
+The published checkpoints declare 224×224 inputs:
 
-Images are prepared as in the upstream RadImageNet example: RGB, nearest-neighbour
-resize to the checkpoint's input size, Caffe-style BGR mean subtraction, then
-scaling by 1/255. Outputs that alias the input or each other are refused. Missing or
-unreadable images raise `InvalidInputError`; missing or mismatched weights raise
-`AssetNotReadyError`.
+| Backbone | Weights file | Pooled width | Spatial map | Map size |
+| :--- | :--- | ---: | :--- | :--- |
+| ResNet50 | `RadImageNet-ResNet50_notop.safetensors` | 2048 | `conv5_block3_out` | 7×7 |
+| DenseNet121 | `RadImageNet-DenseNet121_notop.safetensors` | 1024 | `relu` | 7×7 |
+| InceptionV3 | `RadImageNet-InceptionV3_notop.safetensors` | 2048 | `mixed10` | 5×5 |
+| InceptionResNetV2 | `RadImageNet-IRV2_notop.safetensors` | 1536 | `conv_7b_ac` | 5×5 |
+
+- A checkpoint with a classifier head also writes `predictions.npy`; the published
+  encoders have none.
+- **Preprocessing** follows the upstream RadImageNet example: RGB, nearest-neighbour
+  resize to the checkpoint's input size, Caffe-style BGR mean subtraction, then scaling
+  by 1/255.
+- Outputs that alias the input or each other are refused.
+- Missing or unreadable images raise `InvalidInputError`; missing or mismatched weights
+  raise `AssetNotReadyError`.
 
 ### Local weights
 
@@ -136,15 +140,16 @@ features = encoder(images)  # (1, 2048)
 spatial = encoder.spatial_features(images)  # (1, 7, 7, 2048)
 ```
 
-`RadImageNetMlx(checkpoint_file)` detects the architecture; the family classes also
-enforce it. `extract(images)` returns spatial features, pooled features and any
-classifier predictions in one pass, and `predict` refuses checkpoints without a
-classifier. Encoders take prepared `BxHxWx3` arrays and do not check them for finite
-values. Checkpoints without a fixed input size default to 224×224 for ResNet50 and
-DenseNet121 and 299×299 for the Inception families (minimum 32 and 75).
-
-The loader reads graph metadata and float32 tensors without running Keras or
-serialized Python. Inference requires Apple Silicon with Metal.
+- `RadImageNetMlx(checkpoint_file)` detects the architecture; the family classes also
+  enforce it.
+- `extract(images)` returns spatial features, pooled features and any classifier
+  predictions in one pass, and `predict` refuses checkpoints without a classifier.
+- Encoders take prepared `BxHxWx3` arrays and do not check them for finite values.
+- Checkpoints without a fixed input size default to 224×224 for ResNet50 and
+  DenseNet121 and 299×299 for the Inception families (minimum 32 and 75).
+- The loader reads graph metadata and float32 tensors without running Keras or
+  serialized Python.
+- Inference requires Apple Silicon with Metal.
 
 ## License
 

@@ -60,6 +60,7 @@ pass a folder containing the backbone's weights file as `weights_path`.
 | `output_dir` | Directory for the outputs |
 | `weights_path` | Optional folder containing the backbone's `.safetensors` file |
 | `overwrite` | `False` by default, which refuses to replace existing outputs |
+| `output_selection` | `"all"` (default), or `"pooled"` to write only `features.npy` and metadata |
 
 | Output | File | Contents |
 | --- | --- | --- |
@@ -84,6 +85,29 @@ The published checkpoints declare 224×224 inputs:
 - Outputs that alias the input or each other are refused.
 - Missing or unreadable images raise `InvalidInputError`; missing or mismatched weights
   raise `AssetNotReadyError`.
+
+For a cohort, `run_batch` loads one model and streams actual model batches. Supply
+one output folder per image; each folder keeps the single-image artifact format.
+The iterator publishes completed images in input order and retains them if a later
+image fails. Consume or close it to release the model.
+
+```python
+from radimagenet_mlx.medmlx import FeatureSession
+
+with FeatureSession("RadImageNet-ResNet50_notop.safetensors") as session:
+    for result in session.run_batch(
+        image_paths=["slice1.png", "slice2.png"],
+        output_dirs=["out/slice1", "out/slice2"],
+        batch_size=2,
+        output_selection="pooled",
+    ):
+        print(result["outputs"]["features_npy"])
+```
+
+A session can run further images or cohorts with the same loaded checkpoint.
+`run_batch` from the same module accepts a checkpoint file as `weights_path` and
+manages its own session. Fixed-batch checkpoints use their declared batch size;
+it must fit `batch_size` and divide the cohort length.
 
 ### Local weights
 

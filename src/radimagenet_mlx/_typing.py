@@ -52,7 +52,9 @@ class FeatureMetadata(TypedDict):
     """Metadata written to ``features.json`` and returned as ``details`` (schema 3).
 
     ``shape`` is the pooled feature shape ``(B, C)`` and ``spatial_shape`` the spatial
-    map shape ``(B, H, W, C)``. ``model_path`` is the absolute POSIX checkpoint path.
+    map shape ``(B, H, W, C)`` when requested. Pooled-only runs record
+    ``output_selection="pooled"`` and omit spatial/classifier output shapes.
+    ``model_path`` is the absolute POSIX checkpoint path.
     ``preprocessing`` is ``"upstream"`` (Caffe-mode mean subtraction, then 1/255) and
     ``interpolation`` the resize method (``"nearest"``).
     """
@@ -67,7 +69,8 @@ class FeatureMetadata(TypedDict):
     classification_shape: NotRequired[list[int]]
     feature_layer: str
     spatial_feature_layer: str
-    spatial_shape: list[int]
+    spatial_shape: NotRequired[list[int]]
+    output_selection: NotRequired[str]
     preprocessing: str
     interpolation: str
     backend: str
@@ -76,7 +79,7 @@ class FeatureMetadata(TypedDict):
 class FeatureOutputs(TypedDict):
     predictions_npy: NotRequired[str]
     features_npy: str
-    spatial_features_npy: str
+    spatial_features_npy: NotRequired[str]
     features_json: str
 
 

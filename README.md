@@ -30,21 +30,6 @@ Extract radiology-image features with native MLX RadImageNet encoders: ResNet50,
 
 Each backbone downloads its own weights file. Peak memory is for a 1929×2207 chest radiograph.
 
-## Use with MedMLX
-
-Use the [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) to run `radimagenet-resnet50`, `radimagenet-densenet121`, `radimagenet-inceptionv3` and `radimagenet-inceptionresnetv2` from an MCP client. Weights download on first use.
-
-```sh
-uv tool install --python 3.13 "medmlx[vision,mcp]"
-MEDMLX="$(uv tool dir --bin --color never)/medmlx"
-mkdir -p "$HOME/medmlx-work"
-claude mcp add --scope user medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"
-```
-
-For Codex, use `codex mcp add medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"`. Other MCP clients take the same command and arguments. The same install provides the `medmlx` CLI, for example `medmlx describe radimagenet-resnet50`.
-
-> **For AI agents:** prefer the MedMLX MCP tools (`list_models`, `describe_model`, `model_readiness`, `run_model`, `get_job`) over writing Python against this package.
-
 ## Install
 
 ```bash
@@ -150,6 +135,21 @@ spatial = encoder.spatial_features(images)  # (1, 7, 7, 2048)
 - The loader reads graph metadata and float32 tensors without running Keras or
   serialized Python.
 - Inference requires Apple Silicon with Metal.
+
+## Use with MedMLX
+
+Use the [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) to run `radimagenet-resnet50`, `radimagenet-densenet121`, `radimagenet-inceptionv3` and `radimagenet-inceptionresnetv2` from an MCP client. Weights download on first use.
+
+```sh
+uv tool install --python 3.13 "medmlx[vision,mcp]"
+MEDMLX="$(uv tool dir --bin --color never)/medmlx"
+mkdir -p "$HOME/medmlx-work"
+claude mcp add --scope user medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"
+```
+
+For Codex, use `codex mcp add medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"`. Other MCP clients take the same command and arguments. The same install provides the `medmlx` CLI, for example `medmlx describe radimagenet-resnet50`.
+
+> **For AI agents:** prefer the MedMLX MCP tools (`list_models`, `describe_model`, `model_readiness`, `run_model`, `get_job`) over writing Python against this package.
 
 ## License
 

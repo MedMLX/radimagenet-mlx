@@ -11,8 +11,6 @@ Extract radiology-image features with native MLX RadImageNet encoders: ResNet50,
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-weights-yellow)](https://huggingface.co/MedMLX/radimagenet-mlx)
 [![MedMLX](https://img.shields.io/badge/MedMLX-runtime-A51C30)](https://github.com/MedMLX/medmlx)
 
-[Model weights](https://huggingface.co/MedMLX/radimagenet-mlx) · [MedMLX](https://github.com/MedMLX/medmlx)
-
 <img src="https://raw.githubusercontent.com/MedMLX/radimagenet-mlx/main/docs/showcase.png" alt="RadImageNet encoder features from radiology images" width="100%">
 
 </div>

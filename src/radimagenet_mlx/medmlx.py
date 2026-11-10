@@ -249,11 +249,13 @@ class FeatureSession:
         )
 
     def __enter__(self) -> Self:
+        """Return the session; a closed session raises ``InvalidInputError``."""
         if self._closed:
             raise InvalidInputError("FeatureSession is closed")
         return self
 
     def __exit__(self, *_exception: object) -> None:
+        """Close the session."""
         self.close()
 
     def close(self) -> None:

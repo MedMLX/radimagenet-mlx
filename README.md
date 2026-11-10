@@ -79,7 +79,7 @@ The published checkpoints declare 224×224 inputs:
 
 - A checkpoint with a classifier head also writes `predictions.npy`; the published
   encoders have none.
-- **Preprocessing** follows the upstream RadImageNet example: RGB, nearest-neighbour
+- **Preprocessing** follows the upstream RadImageNet example: RGB, nearest-neighbor
   resize to the checkpoint's input size, Caffe-style BGR mean subtraction, then scaling
   by 1/255.
 - Outputs that alias the input or each other are refused.

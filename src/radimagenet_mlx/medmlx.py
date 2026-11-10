@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from collections.abc import Callable, Iterator, Sequence
 from itertools import combinations
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import mkdtemp
 from typing import TYPE_CHECKING, Self, cast
 
 import numpy as np
@@ -148,18 +149,49 @@ def _architecture(backbone: Architecture | str | None) -> Architecture | None:
         raise InvalidInputError(f"backbone must be one of {choices}; got {backbone!r}") from error
 
 
-def _publish(writes: dict[Path, Callable[[Path], object]]) -> None:
-    """Stage outputs in a private directory, then rename them into place.
+def _publish(
+    writes: dict[Path, Callable[[Path], object]], *, remove: tuple[Path, ...] = ()
+) -> None:
+    """Stage complete outputs and restore earlier files on publication failure.
 
-    Earlier outputs stay untouched until every new file is complete, and a failed
-    write leaves no partial files behind.
+    Keep recovery links if restoration fails so the prior files can be recovered.
     """
-    with TemporaryDirectory(prefix=".radimagenet-mlx-", dir=next(iter(writes)).parent) as staging:
-        partials = {path: Path(staging) / path.name for path in writes}
+    staging = Path(mkdtemp(prefix=".radimagenet-mlx-", dir=next(iter(writes)).parent))
+    cleanup = True
+    try:
+        partials = {path: staging / path.name for path in writes}
         for path, write in writes.items():
             write(partials[path])
-        for path, partial in partials.items():
-            os.replace(partial, path)
+        backups: dict[Path, Path] = {}
+        for index, path in enumerate((*writes, *remove)):
+            if path.exists() or path.is_symlink():
+                backup = staging / f".backup-{index}"
+                os.link(path, backup, follow_symlinks=False)
+                backups[path] = backup
+        changed: list[Path] = []
+        try:
+            for path, partial in partials.items():
+                os.replace(partial, path)
+                changed.append(path)
+            for path in remove:
+                if path.exists() or path.is_symlink():
+                    path.unlink()
+                    changed.append(path)
+        except BaseException:
+            try:
+                for path in reversed(changed):
+                    backup = backups.get(path)
+                    if backup is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        os.replace(backup, path)
+            except OSError as error:
+                cleanup = False
+                raise OSError(f"Cannot restore outputs; backups retained at {staging}") from error
+            raise
+    finally:
+        if cleanup:
+            shutil.rmtree(staging)
 
 
 def _paths_alias(first: Path, second: Path) -> bool:
@@ -304,9 +336,9 @@ class FeatureSession:
 
         ``output_dirs`` provides one distinct folder per input. Fixed-batch models
         use their declared batch size, which must fit the bound and divide the
-        cohort length. Each completed image is published atomically; later failures
-        retain earlier completed jobs. Exhaust or close the iterator before closing
-        this session.
+        cohort length. Each image stages all files before publication; recoverable
+        publication failures restore its earlier files. Later failures retain
+        earlier completed jobs. Exhaust or close the iterator before closing this session.
         """
         selected = _selection(output_selection)
         if (
@@ -472,20 +504,21 @@ def _write_features(
         json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8"
     )
     output.mkdir(parents=True, exist_ok=True)
-    _publish(writes)
+    remove = tuple(
+        path for path, absent in (
+            (spatial_features_npy, spatial_features is None),
+            (predictions_npy, predictions is None),
+        ) if absent
+    )
+    _publish(writes, remove=remove)
     outputs: FeatureOutputs = {
         "features_npy": features_npy.resolve().as_posix(),
         "features_json": features_json.resolve().as_posix(),
     }
     if spatial_features is not None:
         outputs["spatial_features_npy"] = spatial_features_npy.resolve().as_posix()
-    elif spatial_features_npy.exists() or spatial_features_npy.is_symlink():
-        spatial_features_npy.unlink()
     if predictions is not None:
         outputs["predictions_npy"] = predictions_npy.resolve().as_posix()
-    elif predictions_npy.exists() or predictions_npy.is_symlink():
-        # Only reachable with overwrite=True; remove the stale file once the run succeeded.
-        predictions_npy.unlink()
     return {"outputs": outputs, "details": metadata}
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import NoReturn, cast
 
@@ -24,6 +25,59 @@ def write_png(directory: Path, case: str) -> Path:
     path = directory / f"{case}.png"
     path.write_bytes(INPUTS[f"png::{case}"].tobytes())
     return path
+
+
+@pytest.mark.metal
+@pytest.mark.parametrize("failure", ["rename", "stale removal"])
+def test_runner_restores_prior_files_after_publication_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checkpoint: Path, failure: str
+) -> None:
+    """A failed rename or stale-file removal must preserve the prior artifact set."""
+    folder = tmp_path / "weights"
+    folder.mkdir()
+    (folder / "RadImageNet-ResNet50_notop.safetensors").symlink_to(checkpoint)
+    output = tmp_path / "out"
+    output.mkdir()
+    old = {
+        output / "features.npy": b"old features",
+        output / "spatial_features.npy": b"old spatial features",
+        output / "features.json": b"old metadata",
+    }
+    for path, contents in old.items():
+        path.write_bytes(contents)
+    if failure == "rename":
+        replace = os.replace
+        failed = False
+
+        def fail_second(source: Path, destination: Path) -> None:
+            nonlocal failed
+            if destination == output / "spatial_features.npy" and not failed:
+                failed = True
+                raise OSError("injected publication failure")
+            replace(source, destination)
+
+        monkeypatch.setattr(medmlx.os, "replace", fail_second)
+    else:
+        unlink = Path.unlink
+        failed = False
+
+        def fail_stale(path: Path, missing_ok: bool = False) -> None:
+            nonlocal failed
+            if path == output / "spatial_features.npy" and not failed:
+                failed = True
+                raise OSError("injected publication failure")
+            unlink(path, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, "unlink", fail_stale)
+    with pytest.raises(OSError, match="injected publication failure"):
+        medmlx.resnet50(
+            image_path=str(write_png(tmp_path, "rgb")), output_dir=str(output),
+            weights_path=str(folder), overwrite=True,
+            output_selection="pooled" if failure == "stale removal" else "all",
+        )
+
+    for path, contents in old.items():
+        assert path.read_bytes() == contents
 
 
 @pytest.mark.metal

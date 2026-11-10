@@ -114,7 +114,10 @@ def test_complete_application_matches_independent_keras(
 
 
 @pytest.mark.metal
-@pytest.mark.parametrize("damage", ["missing", "nonfinite", "metadata"])
+@pytest.mark.parametrize(
+    "damage",
+    ["missing", "nonfinite", "late_inf", "variance", "dtype", "shape", "extra", "metadata"],
+)
 def test_safetensors_rejects_invalid_checkpoint(tmp_path: Path, damage: str) -> None:
     """Reject malformed graph metadata and missing or invalid tensor parameters."""
     import mlx.core as mx
@@ -130,6 +133,18 @@ def test_safetensors_rejects_invalid_checkpoint(tmp_path: Path, damage: str) -> 
         del tensors[name]
     elif damage == "nonfinite":
         tensors[name] = mx.full(tensors[name].shape, float("nan"))
+    elif damage == "late_inf":
+        name = next(reversed(tensors))
+        tensors[name] = mx.full(tensors[name].shape, float("inf"))
+    elif damage == "variance":
+        name = next(key for key in tensors if key.endswith("/moving_variance"))
+        tensors[name] = mx.full(tensors[name].shape, -1.0)
+    elif damage == "dtype":
+        tensors[name] = tensors[name].astype(mx.float16)
+    elif damage == "shape":
+        tensors[name] = mx.zeros((1,))
+    elif damage == "extra":
+        tensors["unused/kernel"] = mx.zeros((1,))
     else:
         metadata["model_config"] = "{}"
     cast(SafetensorsWriter, mx).save_safetensors(str(path), tensors, metadata=metadata)

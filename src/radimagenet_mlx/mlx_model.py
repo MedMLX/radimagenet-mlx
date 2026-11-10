@@ -11,7 +11,7 @@ from medmlx_core.errors import AssetNotReadyError
 
 from radimagenet_mlx._runtime import import_mlx
 from radimagenet_mlx._typing import ArrayRuntime, FloatArray, HostArray
-from radimagenet_mlx.checkpoint import load_checkpoint
+from radimagenet_mlx.checkpoint import load_native_checkpoint
 from radimagenet_mlx.features import MeanRuntime, native_average_pool
 from radimagenet_mlx.graph import (
     ARCHITECTURES,
@@ -124,13 +124,11 @@ class RadImageNetMlx:
 
     def __init__(self, checkpoint: Path, *, architecture: Architecture | None = None) -> None:
         """Load a supported graph and prepare its MLX weights and normalization scales."""
-        saved = load_checkpoint(checkpoint)
+        saved = load_native_checkpoint(checkpoint)
         if architecture is not None and saved.graph.architecture != architecture:
             raise AssetNotReadyError(f"Expected {architecture}, got {saved.graph.architecture}")
         self.graph = saved.graph
-        self.weights = {
-            f"{weight.node}/{weight.parameter}": mx.array(weight.value) for weight in saved.weights
-        }
+        self.weights = saved.weights
         # Checkpoint parameters are fixed inference state. Preserve the original
         # subtract/scale/add order, while evaluating constant BN scales only once.
         self._batch_norm_scales: dict[str, array] = {}

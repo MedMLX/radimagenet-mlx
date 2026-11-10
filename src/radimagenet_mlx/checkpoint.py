@@ -11,7 +11,7 @@ import numpy as np
 from medmlx_core.errors import AssetNotReadyError
 
 from radimagenet_mlx._runtime import import_mlx
-from radimagenet_mlx._typing import FloatArray, HostArray, JsonValue
+from radimagenet_mlx._typing import FloatArray, JsonValue
 from radimagenet_mlx.graph import (
     BatchNorm,
     Conv,
@@ -25,11 +25,25 @@ from radimagenet_mlx.graph import (
 )
 
 if TYPE_CHECKING:
-    from mlx.core import array
+    from mlx.core import Dtype, array
 
 
 class SafetensorsRuntime(Protocol):
     """Subset of the MLX module used to read safetensors weights and metadata."""
+
+    float32: Dtype
+
+    def all(self, values: array) -> array:
+        """Reduce Boolean admission flags on the device."""
+        ...
+
+    def isfinite(self, values: array) -> array:
+        """Check native parameter finiteness."""
+        ...
+
+    def eval(self, *values: array) -> None:
+        """Evaluate parameters and admission flags together."""
+        ...
 
     def load(
         self, file: str, /, format: Literal["safetensors"], return_metadata: Literal[True]
@@ -53,6 +67,14 @@ class Checkpoint:
 
     graph: Graph
     weights: tuple[Weight, ...]
+
+
+@dataclass(frozen=True)
+class NativeCheckpoint:
+    """A validated graph retaining the originally loaded native parameter arrays."""
+
+    graph: Graph
+    weights: dict[str, array]
 
 
 def _weight_shapes(node: Node, channels: int) -> dict[str, tuple[int, ...]]:
@@ -122,7 +144,7 @@ def _shapes(graph: Graph) -> dict[str, dict[str, tuple[int, ...]]]:
     return expected
 
 
-def _load_safetensors(path: Path) -> Checkpoint:
+def _load_native_safetensors(path: Path) -> NativeCheckpoint:
     """Load declarative graph metadata and finite FP32 tensors in MLX layout."""
     mx = cast(SafetensorsRuntime, import_mlx())
     try:
@@ -136,25 +158,33 @@ def _load_safetensors(path: Path) -> Checkpoint:
         if tensors.keys() != names:
             raise ValueError("safetensors weight names differ from the graph")
         operations = {node.name: node.operation for node in graph.nodes}
-        weights: list[Weight] = []
+        admitted: list[tuple[str, array]] = []
         for name, value in tensors.items():
             node, parameter = name.rsplit("/", 1)
             shape = expected[node][parameter]
             # Conv2D kernels are stored as OHWI; the graph records Keras HWIO shapes.
             if isinstance(operations[node], Conv) and parameter == "kernel":
                 shape = (shape[3], shape[0], shape[1], shape[2])
-            host = cast(HostArray, np.asarray(value))
-            if host.shape != shape or host.dtype != np.float32:
+            if value.shape != shape or value.dtype != mx.float32:
                 raise ValueError(f"Invalid safetensors parameter: {name}")
-            values = cast(FloatArray, host)
-            if not np.isfinite(values).all() or (
-                parameter == "moving_variance" and np.any(values < 0)
-            ):
+            valid = mx.all(mx.isfinite(value))
+            if parameter == "moving_variance":
+                valid = valid & mx.all(value >= 0)
+            admitted.append((name, valid))
+        mx.eval(*tensors.values(), *(valid for _, valid in admitted))
+        for name, valid in admitted:
+            if not valid.item():
                 raise ValueError(f"Invalid safetensors parameter: {name}")
-            weights.append(Weight(node, parameter, values))
-        return Checkpoint(graph, tuple(weights))
+        return NativeCheckpoint(graph, tensors)
     except (KeyError, ValueError, TypeError, OSError, RuntimeError) as error:
         raise AssetNotReadyError(f"Invalid RadImageNet safetensors checkpoint: {error}") from error
+
+
+def load_native_checkpoint(path: Path) -> NativeCheckpoint:
+    """Validate native tensors once without a host representation or reconstruction."""
+    if path.suffix != ".safetensors":
+        raise AssetNotReadyError(f"RadImageNet requires a safetensors checkpoint: {path}")
+    return _load_native_safetensors(path)
 
 
 def load_checkpoint(path: Path) -> Checkpoint:
@@ -167,6 +197,9 @@ def load_checkpoint(path: Path) -> Checkpoint:
     Raises:
         AssetNotReadyError: If the file is not a valid supported checkpoint.
     """
-    if path.suffix != ".safetensors":
-        raise AssetNotReadyError(f"RadImageNet requires a safetensors checkpoint: {path}")
-    return _load_safetensors(path)
+    saved = load_native_checkpoint(path)
+    weights: list[Weight] = []
+    for name, value in saved.weights.items():
+        node, parameter = name.rsplit("/", 1)
+        weights.append(Weight(node, parameter, cast(FloatArray, np.asarray(value))))
+    return Checkpoint(saved.graph, tuple(weights))

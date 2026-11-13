@@ -167,7 +167,10 @@ def _application_checkpoint(
     path: Path, family: Architecture, *, fixed_shape: bool, batch: int | None = None,
 ) -> None:
     """Reconstruct a classifier fixture with the declared fixed or dynamic input axes."""
-    with np.load(FIXTURES / f"application_{family}_classifier.npz", allow_pickle=False) as saved:
+    reference = (
+        FIXTURES.parent.parent / "work/real-reference" / f"application_{family}_classifier.npz"
+    )
+    with np.load(reference, allow_pickle=False) as saved:
         config = cast(ModelConfig, json.loads(saved["model_config"].item()))
         settings = cast(dict[str, object], config["config"]["layers"][0]["config"])
         size = list(saved["images"].shape[1:3]) if fixed_shape else [None, None]

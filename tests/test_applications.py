@@ -37,7 +37,8 @@ WEIGHTS = {
 
 def recipe(family: str, suffix: str) -> dict[str, np.ndarray]:
     """Load one recorded Keras application case and verify its reference versions."""
-    with np.load(FIXTURES / f"application_{family}_{suffix}.npz", allow_pickle=False) as saved:
+    path = FIXTURES.parent.parent / "work/real-reference" / f"application_{family}_{suffix}.npz"
+    with np.load(path, allow_pickle=False) as saved:
         assert saved["schema_version"].item() == 1
         assert saved["tensorflow_version"].item() == TENSORFLOW_VERSION
         assert saved["keras_version"].item() == KERAS_VERSION
@@ -209,7 +210,9 @@ def test_registered_runner_writes_features(tmp_path: Path, runner: str) -> None:
     from radimagenet_mlx import medmlx
 
     image, folder = tmp_path / "input.png", tmp_path / "weights"
-    with np.load(FIXTURES / "keras_preprocessing.npz", allow_pickle=False) as payload:
+    with np.load(
+        FIXTURES.parent.parent / "work/real-reference/keras_preprocessing.npz", allow_pickle=False
+    ) as payload:
         image.write_bytes(payload["png::rgb"].tobytes())
     folder.mkdir()
     checkpoint(folder / WEIGHTS[runner], recipe(runner, "spatial"))

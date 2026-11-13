@@ -20,6 +20,8 @@ NORMALIZATION_KEYS = {"gamma:0", "beta:0", "moving_mean:0", "moving_variance:0"}
 def load_reference(path: Path) -> dict[str, HostArray]:
     """Load a qualified upstream recording; never silently skip missing goldens."""
 
+    if path.name == "keras_preprocessing.npz" or path.name.startswith("keras_resnet50_"):
+        path = Path(__file__).resolve().parents[1] / "work/real-reference" / path.name
     if not path.is_file():
         raise FileNotFoundError(f"Missing upstream fixture {path}")
     with np.load(path, allow_pickle=False) as saved:

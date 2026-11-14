@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, NotRequired, Protocol, TypedDict
 
 import numpy as np
-from medmlx_core.outputs import Artifact
+from medmlx_core.outputs import RunResult as _RunResult
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
@@ -84,7 +84,4 @@ class FeatureOutputs(TypedDict):
     predictions: NotRequired[str]
 
 
-class RunResult(TypedDict):
-    outputs: FeatureOutputs
-    artifacts: dict[str, Artifact]
-    details: FeatureMetadata
+type RunResult = _RunResult[FeatureMetadata, FeatureOutputs]

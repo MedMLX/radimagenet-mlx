@@ -19,10 +19,11 @@ from collections.abc import Callable, Iterator, Sequence
 from itertools import combinations
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import TYPE_CHECKING, Self, cast
+from typing import TYPE_CHECKING, Literal, Self, cast
 
 import numpy as np
 from medmlx_core.errors import AssetNotReadyError, InvalidInputError
+from medmlx_core.outputs import Artifact, artifact
 from medmlx_core.weights import weights_dir, weights_revision
 from PIL import Image
 
@@ -72,6 +73,19 @@ FEATURES_NPY = "features.npy"
 SPATIAL_FEATURES_NPY = "spatial_features.npy"
 FEATURES_JSON = "features.json"
 PREDICTIONS_NPY = "predictions.npy"
+
+type Backbone = (
+    Architecture | Literal["resnet50", "densenet121", "inceptionv3", "inceptionresnetv2"]
+)
+type OutputSelection = Literal["all", "pooled"]
+
+# The published file for each backbone inside a weights folder.
+CHECKPOINT_FILES: dict[Architecture, str] = {
+    Architecture.RESNET50: "RadImageNet-ResNet50_notop.safetensors",
+    Architecture.DENSENET121: "RadImageNet-DenseNet121_notop.safetensors",
+    Architecture.INCEPTIONV3: "RadImageNet-InceptionV3_notop.safetensors",
+    Architecture.INCEPTIONRESNETV2: "RadImageNet-IRV2_notop.safetensors",
+}
 
 
 def prepare_image(path: Path, size: tuple[int, int] = INPUT_SIZE) -> FloatArray:
@@ -138,7 +152,7 @@ def _check_outputs(output: Path, overwrite: bool, inputs: tuple[Path, ...]) -> N
         raise InvalidInputError("RadImageNet outputs must not alias each other")
 
 
-def _architecture(backbone: Architecture | str | None) -> Architecture | None:
+def _architecture(backbone: Backbone | None) -> Architecture | None:
     """Return the requested backbone, rejecting unknown names before any work."""
     if backbone is None:
         return None
@@ -201,25 +215,53 @@ def _paths_alias(first: Path, second: Path) -> bool:
     )
 
 
-def _selection(value: str) -> str:
+def _selection(value: str) -> OutputSelection:
     """Admit the full legacy artifact set or pooled features only."""
     if value not in ("all", "pooled"):
         raise InvalidInputError("output_selection must be 'all' or 'pooled'")
     return value
 
 
-def _checkpoint_path(value: str) -> Path:
-    """Check the model path without loading native weights."""
-    path = Path(value).expanduser()
-    if not path.is_file():
-        raise AssetNotReadyError(
-            f"Missing RadImageNet model: {path}", reason=f"missing {path}",
-            hint="Pass weights_path pointing to a supported safetensors model file.",
+def _checkpoint_path(value: str | Path, backbone: Architecture | None) -> Path:
+    """Select the weights file inside a ``weights_path`` folder without loading it.
+
+    With ``backbone`` the file is that backbone's entry in ``CHECKPOINT_FILES``.
+    Without it the folder must hold exactly one of the published files.
+    """
+    folder = Path(value).expanduser()
+    if folder.is_file():
+        raise InvalidInputError(
+            f"weights_path must be the folder that contains the weights file, not the file: "
+            f"{folder}; pass {folder.parent}"
         )
-    return path
+    if not folder.is_dir():
+        raise AssetNotReadyError(
+            f"Missing RadImageNet weights folder: {folder}", reason=f"missing {folder}",
+            hint="Pass weights_path as a folder containing the backbone's .safetensors file.",
+        )
+    if backbone is not None:
+        path = folder / CHECKPOINT_FILES[backbone]
+        if not path.is_file():
+            raise AssetNotReadyError(
+                f"RadImageNet weights folder must contain {path.name}: {folder}",
+                hint="Run medmlx setup, or pass a complete weights_path folder.",
+            )
+        return path
+    found = [folder / name for name in CHECKPOINT_FILES.values() if (folder / name).is_file()]
+    if len(found) > 1:
+        raise InvalidInputError(
+            f"RadImageNet weights folder holds {len(found)} backbones: {folder}; "
+            "pass backbone to choose one"
+        )
+    if not found:
+        raise AssetNotReadyError(
+            f"RadImageNet weights folder holds no RadImageNet-*_notop.safetensors file: {folder}",
+            hint="Pass weights_path as a folder containing the backbone's .safetensors file.",
+        )
+    return found[0]
 
 
-def _source_path(value: str) -> Path:
+def _source_path(value: str | Path) -> Path:
     """Require a local image path before decoding or loading a model."""
     path = Path(value).expanduser()
     if not path.is_file():
@@ -237,7 +279,8 @@ def _path_ids(path: Path) -> set[Path | tuple[int, int]]:
 
 
 def _batch_paths(
-    image_paths: Sequence[str], output_dirs: Sequence[str], checkpoint: Path, overwrite: bool,
+    image_paths: Sequence[str | Path], output_dirs: Sequence[str | Path], checkpoint: Path,
+    overwrite: bool,
 ) -> tuple[tuple[Path, Path], ...]:
     """Preflight all cohort paths in linear space/time before any output is replaced."""
     if not image_paths or len(image_paths) != len(output_dirs):
@@ -269,10 +312,15 @@ class FeatureSession:
     activations by ``batch_size`` and yields the usual result per image.
     """
 
-    def __init__(self, weights_path: str, *, backbone: Architecture | str | None = None):
-        """Validate a checkpoint path and architecture without loading native weights."""
+    def __init__(self, weights_path: str | Path, *, backbone: Backbone | None = None):
+        """Validate a weights folder and architecture without loading native weights.
+
+        ``weights_path`` is the folder that contains the weights file; ``checkpoint``
+        is the file selected from it (see ``_checkpoint_path``). Passing a file raises
+        ``InvalidInputError``.
+        """
         self._required = _architecture(backbone)
-        self.checkpoint = _checkpoint_path(weights_path)
+        self.checkpoint = _checkpoint_path(weights_path, self._required)
         self._encoder: RadImageNetMlx | None = None
         self._closed = False
         stat = self.checkpoint.stat()
@@ -310,7 +358,8 @@ class FeatureSession:
         return self._encoder
 
     def run(
-        self, *, image_path: str, output_dir: str, output_selection: str = "all",
+        self, *, image_path: str | Path, output_dir: str | Path,
+        output_selection: OutputSelection = "all",
         overwrite: bool = False, _decoded: Image.Image | None = None,
     ) -> RunResult:
         """Write one image's selected artifacts, preserving the default full output contract."""
@@ -329,8 +378,8 @@ class FeatureSession:
         return _write_features(encoder, self.checkpoint, output, features, spatial, predictions)
 
     def run_batch(
-        self, *, image_paths: Sequence[str], output_dirs: Sequence[str], batch_size: int = 8,
-        output_selection: str = "all", overwrite: bool = False,
+        self, *, image_paths: Sequence[str | Path], output_dirs: Sequence[str | Path],
+        batch_size: int = 8, output_selection: OutputSelection = "all", overwrite: bool = False,
     ) -> Iterator[RunResult]:
         """Stream real model batches, yielding schema-3 artifacts per image in input order.
 
@@ -395,16 +444,18 @@ def _infer(
 
 def run(
     *,
-    image_path: str,
-    weights_path: str,
-    output_dir: str,
-    backbone: Architecture | str | None = None,
+    image_path: str | Path,
+    weights_path: str | Path,
+    output_dir: str | Path,
+    backbone: Backbone | None = None,
     overwrite: bool = False,
-    output_selection: str = "all",
+    output_selection: OutputSelection = "all",
 ) -> RunResult:
     """Extract native backbone features and any supplied classifier from a saved model.
 
-    Detect all four official architectures; optionally require ``backbone``.
+    Select the weights file inside the ``weights_path`` folder by ``backbone``, or,
+    without ``backbone``, the only RadImageNet file in it; the architecture is
+    detected from the file and checked against ``backbone``.
     Fixed checkpoint dimensions govern resizing, otherwise use 224 for ResNet
     and DenseNet or 299 for Inception families. All use the upstream preprocessing
     described in ``prepare_image``. Outputs carry schema version 3. In full-output
@@ -414,8 +465,9 @@ def run(
 
     Args:
         image_path: Path to a Pillow-readable image; the first frame is used.
-        weights_path: Local safetensors file containing graph metadata and float32 weights.
-            Weights are not downloaded.
+        weights_path: Local folder containing the backbone's safetensors file (graph
+            metadata and float32 weights), such as ``RadImageNet-ResNet50_notop.safetensors``.
+            A file path raises ``InvalidInputError``. Weights are not downloaded.
         output_dir: Directory for pooled and spatial features and metadata;
             classifier predictions are also written when present in the model.
         backbone: Architecture to require: ``resnet50``, ``densenet121``,
@@ -429,15 +481,18 @@ def run(
             classifier output; ``"pooled"`` writes only pooled features and metadata.
 
     Returns:
-        ``{"outputs": {...}, "details": {...}}`` with absolute POSIX output paths and
-        the metadata also written to ``features.json``.
+        ``{"outputs": {...}, "artifacts": {...}, "details": {...}}`` with absolute POSIX
+        output paths, an artifact for each (arrays are ``feature_tensor``,
+        ``features_json`` is a ``report``; none has a coordinate space) and the
+        metadata also written to ``features.json``.
 
     Raises:
         InvalidInputError: Missing or unreadable image, unknown ``backbone``,
             ``overwrite`` not a bool, ``output_dir`` not a directory, existing outputs
-            without ``overwrite``, or output aliases.
-        AssetNotReadyError: Missing or invalid checkpoint, or its architecture is not
-            the requested ``backbone``.
+            without ``overwrite``, output aliases, ``weights_path`` is a file, or the
+            folder holds several backbones and ``backbone`` is not given.
+        AssetNotReadyError: Missing weights folder or file, invalid checkpoint, or its
+            architecture is not the requested ``backbone``.
     """
 
     _source_path(image_path)
@@ -450,13 +505,14 @@ def run(
 
 
 def run_batch(
-    *, image_paths: Sequence[str], weights_path: str, output_dirs: Sequence[str],
-    batch_size: int = 8, backbone: Architecture | str | None = None,
-    output_selection: str = "all", overwrite: bool = False,
+    *, image_paths: Sequence[str | Path], weights_path: str | Path,
+    output_dirs: Sequence[str | Path], batch_size: int = 8, backbone: Backbone | None = None,
+    output_selection: OutputSelection = "all", overwrite: bool = False,
 ) -> Iterator[RunResult]:
     """Load one model for a bounded cohort and yield the usual per-image results.
 
-    Each image has its own ``output_dirs`` folder. Consume or close the iterator
+    ``weights_path`` is a weights folder, as in ``run``. Each image has its own
+    ``output_dirs`` folder. Consume or close the iterator
     to release its model; use ``FeatureSession`` to reuse it across multiple cohorts.
     See ``FeatureSession.run_batch`` for fixed-batch and partial-completion behavior.
     """
@@ -519,41 +575,45 @@ def _write_features(
         outputs["spatial_features_npy"] = spatial_features_npy.resolve().as_posix()
     if predictions is not None:
         outputs["predictions_npy"] = predictions_npy.resolve().as_posix()
-    return {"outputs": outputs, "details": metadata}
+    artifacts: dict[str, Artifact] = {
+        "features_npy": artifact(kind="feature_tensor", coordinate_space="not_applicable"),
+        "features_json": artifact(kind="report", coordinate_space="not_applicable"),
+    }
+    if spatial_features is not None:
+        artifacts["spatial_features_npy"] = artifact(
+            kind="feature_tensor", coordinate_space="not_applicable",
+        )
+    if predictions is not None:
+        artifacts["predictions_npy"] = artifact(
+            kind="feature_tensor", coordinate_space="not_applicable",
+        )
+    return {"outputs": outputs, "artifacts": artifacts, "details": metadata}
 
 
 
 def _run_backbone(
-    model_id: str, filename: str, architecture: str, *, image_path: str,
-    output_dir: str, weights_path: str | None, overwrite: bool,
-    output_selection: str,
+    model_id: str, architecture: Architecture, *, image_path: str | Path,
+    output_dir: str | Path, weights_path: str | Path | None, overwrite: bool,
+    output_selection: OutputSelection,
 ) -> RunResult:
-    """Resolve the shared model folder and select the registered backbone's file."""
+    """Resolve the shared model folder; the session selects the backbone's file in it."""
     source = _source_path(image_path)
     _selection(output_selection)
     _check_outputs(Path(output_dir).expanduser(), overwrite, (source,))
     with _decode_image(source) as decoded:
         directory = (Path(weights_path).expanduser()
                      if weights_path is not None else weights_dir(model_id))
-        if not directory.is_dir():
-            raise AssetNotReadyError(f"Missing RadImageNet weights folder: {directory}")
-        checkpoint = directory / filename
-        if not checkpoint.is_file():
-            raise AssetNotReadyError(
-                f"RadImageNet weights folder must contain {filename}: {directory}",
-                hint=f"Run medmlx setup {model_id}, or pass a complete weights_path folder.",
-            )
-        with FeatureSession(str(checkpoint), backbone=architecture) as session:
+        with FeatureSession(directory, backbone=architecture) as session:
             return session.run(
-                image_path=str(source), output_dir=output_dir, overwrite=overwrite,
+                image_path=source, output_dir=output_dir, overwrite=overwrite,
                 output_selection=output_selection, _decoded=decoded,
             )
 
 
 def resnet50(
-    *, image_path: str, output_dir: str, weights_path: str | None = None,
+    *, image_path: str | Path, output_dir: str | Path, weights_path: str | Path | None = None,
     overwrite: bool = False,
-    output_selection: str = "all",
+    output_selection: OutputSelection = "all",
 ) -> RunResult:
     """Extract ResNet50 features; omitted weights download MedMLX/radimagenet-mlx.
 
@@ -565,16 +625,16 @@ def resnet50(
         output_selection: ``"all"`` (default) or ``"pooled"`` for features and metadata only.
     """
     return _run_backbone(
-        "radimagenet-resnet50", "RadImageNet-ResNet50_notop.safetensors", "resnet50",
+        "radimagenet-resnet50", Architecture.RESNET50,
         image_path=image_path, output_dir=output_dir,
         weights_path=weights_path, overwrite=overwrite, output_selection=output_selection,
     )
 
 
 def densenet121(
-    *, image_path: str, output_dir: str, weights_path: str | None = None,
+    *, image_path: str | Path, output_dir: str | Path, weights_path: str | Path | None = None,
     overwrite: bool = False,
-    output_selection: str = "all",
+    output_selection: OutputSelection = "all",
 ) -> RunResult:
     """Extract DenseNet121 features from an optional weights_path folder.
 
@@ -582,16 +642,16 @@ def densenet121(
     must contain RadImageNet-DenseNet121_notop.safetensors. Input/output behavior matches resnet50.
     """
     return _run_backbone(
-        "radimagenet-densenet121", "RadImageNet-DenseNet121_notop.safetensors", "densenet121",
+        "radimagenet-densenet121", Architecture.DENSENET121,
         image_path=image_path, output_dir=output_dir,
         weights_path=weights_path, overwrite=overwrite, output_selection=output_selection,
     )
 
 
 def inceptionv3(
-    *, image_path: str, output_dir: str, weights_path: str | None = None,
+    *, image_path: str | Path, output_dir: str | Path, weights_path: str | Path | None = None,
     overwrite: bool = False,
-    output_selection: str = "all",
+    output_selection: OutputSelection = "all",
 ) -> RunResult:
     """Extract InceptionV3 features from an optional weights_path folder.
 
@@ -599,16 +659,16 @@ def inceptionv3(
     must contain RadImageNet-InceptionV3_notop.safetensors. Input/output behavior matches resnet50.
     """
     return _run_backbone(
-        "radimagenet-inceptionv3", "RadImageNet-InceptionV3_notop.safetensors", "inceptionv3",
+        "radimagenet-inceptionv3", Architecture.INCEPTIONV3,
         image_path=image_path, output_dir=output_dir,
         weights_path=weights_path, overwrite=overwrite, output_selection=output_selection,
     )
 
 
 def inceptionresnetv2(
-    *, image_path: str, output_dir: str, weights_path: str | None = None,
+    *, image_path: str | Path, output_dir: str | Path, weights_path: str | Path | None = None,
     overwrite: bool = False,
-    output_selection: str = "all",
+    output_selection: OutputSelection = "all",
 ) -> RunResult:
     """Extract InceptionResNetV2 features from an optional weights_path folder.
 
@@ -616,7 +676,7 @@ def inceptionresnetv2(
     must contain RadImageNet-IRV2_notop.safetensors. Input/output behavior matches resnet50.
     """
     return _run_backbone(
-        "radimagenet-inceptionresnetv2", "RadImageNet-IRV2_notop.safetensors", "inceptionresnetv2",
+        "radimagenet-inceptionresnetv2", Architecture.INCEPTIONRESNETV2,
         image_path=image_path, output_dir=output_dir,
         weights_path=weights_path, overwrite=overwrite, output_selection=output_selection,
     )

@@ -68,6 +68,8 @@ pass a folder containing the backbone's weights file as `weights_path`.
 | `spatial_features_npy` | `spatial_features.npy` | float32 `(1, H, W, C)` last spatial map |
 | `features_json` | `features.json` | Run metadata, also returned as `details` |
 
+The result also holds an `artifacts` entry for each output: `feature_tensor` for the arrays and `report` for the metadata.
+
 The published checkpoints declare 224×224 inputs:
 
 | Backbone | Weights file | Pooled width | Spatial map | Map size |
@@ -94,7 +96,7 @@ image fails. Consume or close it to release the model.
 ```python
 from radimagenet_mlx.medmlx import FeatureSession
 
-with FeatureSession("RadImageNet-ResNet50_notop.safetensors") as session:
+with FeatureSession("weights", backbone="resnet50") as session:
     for result in session.run_batch(
         image_paths=["slice1.png", "slice2.png"],
         output_dirs=["out/slice1", "out/slice2"],
@@ -105,15 +107,17 @@ with FeatureSession("RadImageNet-ResNet50_notop.safetensors") as session:
 ```
 
 A session can run further images or cohorts with the same loaded checkpoint.
-`run_batch` from the same module accepts a checkpoint file as `weights_path` and
-manages its own session. Fixed-batch checkpoints use their declared batch size;
+`weights_path` is the folder containing the weights file, here `weights/`. `run_batch` from
+the same module takes the same folder and manages its own session. Fixed-batch checkpoints use their declared batch size;
 it must fit `batch_size` and divide the cohort length.
 
 ### Local weights
 
-Download one of the [native weights](https://huggingface.co/MedMLX/radimagenet-mlx) and pass the file:
+Download one of the [native weights](https://huggingface.co/MedMLX/radimagenet-mlx) and pass the folder that contains the file:
 
 ```python
+from pathlib import Path
+
 from huggingface_hub import hf_hub_download
 from radimagenet_mlx.medmlx import run
 
@@ -123,16 +127,17 @@ weights = hf_hub_download(
 )
 result = run(
     image_path="slice.png",
-    weights_path=weights,
+    weights_path=Path(weights).parent,
     output_dir="features",
 )
 print(result["outputs"]["features_npy"])
 ```
 
-The safetensors file must contain float32 MLX-layout weights and declarative
+`weights_path` is always a folder; passing the file raises `InvalidInputError`. The folder
+must contain the backbone's published file name, listed above. The safetensors file must contain float32 MLX-layout weights and declarative
 `model_config` graph metadata. The published bundle contains four encoders without
 classification heads. Classifier predictions require a checkpoint that includes a classifier.
-`run` detects the backbone, or takes `backbone="resnet50"`, `"densenet121"`,
+`run` uses the only RadImageNet file in the folder, or takes `backbone="resnet50"`, `"densenet121"`,
 `"inceptionv3"` or `"inceptionresnetv2"`.
 
 ### Python API

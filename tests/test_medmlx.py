@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from _reference_checkpoint import load_reference, write_native_checkpoint
 from medmlx_core.errors import InvalidInputError
+from medmlx_core.outputs import validate_outputs
 
 from radimagenet_mlx import medmlx
 from radimagenet_mlx._typing import FloatArray, ModelConfig, WeightSpec
@@ -98,10 +99,17 @@ def test_resnet50_runner_matches_keras(
     result = medmlx.resnet50(
         image_path=str(write_png(tmp_path, case)), output_dir=str(output),
         weights_path=str(folder),
-        output_selection=output_selection,
+        output_selection=cast(medmlx.OutputSelection, output_selection),
     )
     expected = load_reference(FIXTURES / f"{fixture}.npz")
     outputs = result["outputs"]
+    paths, artifacts = validate_outputs(result)
+    assert set(artifacts) == set(paths) == set(outputs)
+    assert artifacts["features_json"]["kind"] == "report"
+    assert {artifacts[role]["kind"] for role in outputs if role.endswith("_npy")} == {
+        "feature_tensor"
+    }
+    assert {entry["coordinate_space"] for entry in artifacts.values()} == {"not_applicable"}
     comparisons = [(outputs["features_npy"], "pooled")]
     if output_selection == "all":
         assert "spatial_features_npy" in outputs
@@ -151,16 +159,30 @@ def test_runner_rejects_invalid_arguments_before_download(
     with pytest.raises(InvalidInputError):
         if problem == "unknown_backbone":
             medmlx.run(
-                image_path=image_path, weights_path=str(tmp_path / "absent.safetensors"),
+                image_path=image_path, weights_path=str(tmp_path / "absent"),
                 output_dir=str(output),
-                backbone="resnet18",
+                backbone=cast(medmlx.Backbone, "resnet18"),
             )
         elif problem == "output_selection":
             medmlx.resnet50(
-                image_path=image_path, output_dir=str(output), output_selection="unknown",
+                image_path=image_path, output_dir=str(output),
+                output_selection=cast(medmlx.OutputSelection, "unknown"),
             )
         else:
             medmlx.resnet50(image_path=image_path, output_dir=str(output), overwrite=overwrite)
+
+
+def test_weights_path_rejects_a_file(tmp_path: Path) -> None:
+    """A weights file is refused; ``weights_path`` is always the folder holding it."""
+    folder = tmp_path / "weights"
+    folder.mkdir()
+    file = folder / "RadImageNet-ResNet50_notop.safetensors"
+    file.write_bytes(b"unread")
+    image = str(write_png(tmp_path, "gray"))
+    with pytest.raises(InvalidInputError, match="folder that contains the weights file"):
+        medmlx.run(image_path=image, weights_path=str(file), output_dir=str(tmp_path / "out"))
+    with pytest.raises(InvalidInputError, match="folder that contains the weights file"):
+        medmlx.FeatureSession(file, backbone=Architecture.RESNET50)
 
 
 def _application_checkpoint(
@@ -190,7 +212,9 @@ def test_pooled_batch_session_matches_full_features(
     """All backbones preserve pooled vectors, classifier defaults, batch tails and model reuse."""
     from radimagenet_mlx import mlx_model
 
-    checkpoint = tmp_path / "model.safetensors"
+    folder = tmp_path / "weights"
+    folder.mkdir()
+    checkpoint = folder / medmlx.CHECKPOINT_FILES[family]
     _application_checkpoint(checkpoint, family, fixed_shape=fixed_shape)
     images = [str(write_png(tmp_path, case)) for case in ("rgb", "slice_gray", "gray")]
     folders = [str(tmp_path / f"image-{i}") for i in range(len(images))]
@@ -200,10 +224,11 @@ def test_pooled_batch_session_matches_full_features(
     ])
     expected = encoder.extract(prepared)
     np.testing.assert_array_equal(encoder.features(prepared), expected.features)
-    with medmlx.FeatureSession(str(checkpoint), backbone=family) as session:
+    with medmlx.FeatureSession(folder, backbone=family) as session:
         full = list(session.run_batch(image_paths=images, output_dirs=folders, batch_size=2))
         for index, result in enumerate(full):
             assert result["details"]["schema_version"] == 3
+            assert set(validate_outputs(result).artifacts) == set(result["outputs"])
             assert set(result["outputs"]) == {
                 "features_npy", "spatial_features_npy", "features_json", "predictions_npy",
             }
@@ -238,11 +263,13 @@ def test_pooled_batch_session_matches_full_features(
 @pytest.mark.metal
 def test_batch_runner_honors_fixed_checkpoint_batch(tmp_path: Path) -> None:
     """A fixed batch is used unchanged, and incompatible cohort tails are rejected."""
-    checkpoint = tmp_path / "fixed.safetensors"
+    folder = tmp_path / "weights"
+    folder.mkdir()
+    checkpoint = folder / medmlx.CHECKPOINT_FILES[Architecture.RESNET50]
     _application_checkpoint(checkpoint, Architecture.RESNET50, fixed_shape=True, batch=2)
     images = [str(write_png(tmp_path, case)) for case in ("rgb", "gray")]
     results = list(medmlx.run_batch(
-        image_paths=images, weights_path=str(checkpoint),
+        image_paths=images, weights_path=str(folder),
         output_dirs=[str(tmp_path / f"fixed-{i}") for i in range(2)],
         batch_size=3, output_selection="pooled",
     ))
@@ -250,7 +277,7 @@ def test_batch_runner_honors_fixed_checkpoint_batch(tmp_path: Path) -> None:
     assert np.load(results[0]["outputs"]["features_npy"]).shape == (1, 2048)
     with pytest.raises(InvalidInputError, match="fixed checkpoint batch"):
         list(medmlx.run_batch(
-            image_paths=images[:1], weights_path=str(checkpoint),
+            image_paths=images[:1], weights_path=str(folder),
             output_dirs=[str(tmp_path / "tail")], batch_size=3,
         ))
 
@@ -273,8 +300,11 @@ def test_batch_paths_reject_cross_job_collisions_before_weights(
     elif problem == "output_alias":
         (folders[0] / "features.npy").write_bytes(b"previous features")
         (folders[1] / "spatial_features.npy").hardlink_to(folders[0] / "features.npy")
+    weights = tmp_path / "weights"
+    weights.mkdir()
+    (weights / medmlx.CHECKPOINT_FILES[Architecture.RESNET50]).write_bytes(b"unread")
     with pytest.raises(InvalidInputError):
         list(medmlx.run_batch(
             image_paths=[str(path) for path in images], output_dirs=[str(path) for path in folders],
-            weights_path=str(images[0]), batch_size=0 if problem == "bound" else 2, overwrite=True,
+            weights_path=str(weights), batch_size=0 if problem == "bound" else 2, overwrite=True,
         ))

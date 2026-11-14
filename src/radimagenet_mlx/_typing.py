@@ -78,10 +78,10 @@ class FeatureMetadata(TypedDict):
 
 
 class FeatureOutputs(TypedDict):
-    predictions_npy: NotRequired[str]
-    features_npy: str
-    spatial_features_npy: NotRequired[str]
-    features_json: str
+    features: str
+    metadata: str
+    spatial_features: NotRequired[str]
+    predictions: NotRequired[str]
 
 
 class RunResult(TypedDict):

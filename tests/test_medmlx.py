@@ -1,12 +1,12 @@
-"""End-to-end ResNet50 runner against upstream Keras references, and argument rejection."""
+"""End-to-end ResNet50 extraction against upstream Keras references, and argument rejection."""
 
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import NoReturn, cast
 
+import medmlx_core.weights as core_weights
 import numpy as np
 import pytest
 from _reference_checkpoint import load_reference, write_native_checkpoint
@@ -19,6 +19,10 @@ from radimagenet_mlx.graph import Architecture
 
 FIXTURES = Path(__file__).parent / "fixtures"
 INPUTS = load_reference(FIXTURES / "keras_preprocessing.npz")
+MODEL_IDS: dict[Architecture, medmlx.ModelId] = {
+    architecture: cast(medmlx.ModelId, model)
+    for model, architecture in medmlx.ARCHITECTURES.items()
+}
 
 
 def write_png(directory: Path, case: str) -> Path:
@@ -26,59 +30,6 @@ def write_png(directory: Path, case: str) -> Path:
     path = directory / f"{case}.png"
     path.write_bytes(INPUTS[f"png::{case}"].tobytes())
     return path
-
-
-@pytest.mark.metal
-@pytest.mark.parametrize("failure", ["rename", "stale removal"])
-def test_runner_restores_prior_files_after_publication_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checkpoint: Path, failure: str
-) -> None:
-    """A failed rename or stale-file removal must preserve the prior artifact set."""
-    folder = tmp_path / "weights"
-    folder.mkdir()
-    (folder / "RadImageNet-ResNet50_notop.safetensors").symlink_to(checkpoint)
-    output = tmp_path / "out"
-    output.mkdir()
-    old = {
-        output / "features.npy": b"old features",
-        output / "spatial_features.npy": b"old spatial features",
-        output / "features.json": b"old metadata",
-    }
-    for path, contents in old.items():
-        path.write_bytes(contents)
-    if failure == "rename":
-        replace = os.replace
-        failed = False
-
-        def fail_second(source: Path, destination: Path) -> None:
-            nonlocal failed
-            if destination == output / "spatial_features.npy" and not failed:
-                failed = True
-                raise OSError("injected publication failure")
-            replace(source, destination)
-
-        monkeypatch.setattr(medmlx.os, "replace", fail_second)
-    else:
-        unlink = Path.unlink
-        failed = False
-
-        def fail_stale(path: Path, missing_ok: bool = False) -> None:
-            nonlocal failed
-            if path == output / "spatial_features.npy" and not failed:
-                failed = True
-                raise OSError("injected publication failure")
-            unlink(path, missing_ok=missing_ok)
-
-        monkeypatch.setattr(Path, "unlink", fail_stale)
-    with pytest.raises(OSError, match="injected publication failure"):
-        medmlx.resnet50(
-            image_path=str(write_png(tmp_path, "rgb")), output_dir=str(output),
-            weights_path=str(folder), overwrite=True,
-            output_selection="pooled" if failure == "stale removal" else "all",
-        )
-
-    for path, contents in old.items():
-        assert path.read_bytes() == contents
 
 
 @pytest.mark.metal
@@ -96,26 +47,26 @@ def test_resnet50_runner_matches_keras(
     (folder / "RadImageNet-ResNet50_notop.safetensors").symlink_to(checkpoint)
     output = tmp_path / "out"
     output.mkdir()
-    result = medmlx.resnet50(
-        image_path=str(write_png(tmp_path, case)), output_dir=str(output),
-        weights_path=str(folder),
+    result = medmlx.extract(
+        model="radimagenet-resnet50", image_path=str(write_png(tmp_path, case)),
+        output_dir=str(output), weights_path=str(folder),
         output_selection=cast(medmlx.OutputSelection, output_selection),
     )
     expected = load_reference(FIXTURES / f"{fixture}.npz")
     outputs = result["outputs"]
     paths, artifacts = validate_outputs(result)
     assert set(artifacts) == set(paths) == set(outputs)
-    assert artifacts["features_json"]["kind"] == "report"
-    assert {artifacts[role]["kind"] for role in outputs if role.endswith("_npy")} == {
+    assert artifacts["metadata"]["kind"] == "report"
+    assert {artifacts[role]["kind"] for role in outputs if role != "metadata"} == {
         "feature_tensor"
     }
     assert {entry["coordinate_space"] for entry in artifacts.values()} == {"not_applicable"}
-    comparisons = [(outputs["features_npy"], "pooled")]
+    comparisons = [(outputs["features"], "pooled")]
     if output_selection == "all":
-        assert "spatial_features_npy" in outputs
-        comparisons.append((outputs["spatial_features_npy"], "spatial"))
+        assert "spatial_features" in outputs
+        comparisons.append((outputs["spatial_features"], "spatial"))
     else:
-        assert set(outputs) == {"features_npy", "features_json"}
+        assert set(outputs) == {"features", "metadata"}
     for path, key in comparisons:
         actual = np.load(path, allow_pickle=False)
         assert actual.dtype == np.float32
@@ -126,7 +77,7 @@ def test_resnet50_runner_matches_keras(
 
 @pytest.mark.parametrize(
     "problem",
-    ["missing_image", "unknown_backbone", "overwrite_not_bool", "existing_output",
+    ["missing_image", "unknown_model", "overwrite_not_bool", "existing_output",
      "output_links_image", "unreadable_image", "truncated_image", "output_selection"],
 )
 def test_runner_rejects_invalid_arguments_before_download(
@@ -134,11 +85,11 @@ def test_runner_rejects_invalid_arguments_before_download(
 ) -> None:
     """Reject each invalid argument category before any weights are downloaded."""
 
-    def no_download(model_id: str) -> Path:
+    def no_download(model_id: str, **_options: object) -> Path:
         """Fail the test if the runner reaches the weights download."""
         raise AssertionError(f"downloaded {model_id}")
 
-    monkeypatch.setattr(medmlx, "weights_dir", no_download)
+    monkeypatch.setattr(core_weights, "weights_dir", no_download)
     image, output = write_png(tmp_path, "gray"), tmp_path / "out"
     output.mkdir()
     image_path, overwrite = str(image), False
@@ -156,33 +107,16 @@ def test_runner_rejects_invalid_arguments_before_download(
     elif problem == "truncated_image":
         encoded = INPUTS["png::rgb"].tobytes()
         image.write_bytes(encoded[:len(encoded) // 2])
+    model = cast(medmlx.ModelId, "radimagenet-resnet18" if problem == "unknown_model" else
+                 "radimagenet-resnet50")
+    selection = cast(
+        medmlx.OutputSelection, "unknown" if problem == "output_selection" else "all"
+    )
     with pytest.raises(InvalidInputError):
-        if problem == "unknown_backbone":
-            medmlx.run(
-                image_path=image_path, weights_path=str(tmp_path / "absent"),
-                output_dir=str(output),
-                backbone=cast(medmlx.Backbone, "resnet18"),
-            )
-        elif problem == "output_selection":
-            medmlx.resnet50(
-                image_path=image_path, output_dir=str(output),
-                output_selection=cast(medmlx.OutputSelection, "unknown"),
-            )
-        else:
-            medmlx.resnet50(image_path=image_path, output_dir=str(output), overwrite=overwrite)
-
-
-def test_weights_path_rejects_a_file(tmp_path: Path) -> None:
-    """A weights file is refused; ``weights_path`` is always the folder holding it."""
-    folder = tmp_path / "weights"
-    folder.mkdir()
-    file = folder / "RadImageNet-ResNet50_notop.safetensors"
-    file.write_bytes(b"unread")
-    image = str(write_png(tmp_path, "gray"))
-    with pytest.raises(InvalidInputError, match="folder that contains the weights file"):
-        medmlx.run(image_path=image, weights_path=str(file), output_dir=str(tmp_path / "out"))
-    with pytest.raises(InvalidInputError, match="folder that contains the weights file"):
-        medmlx.FeatureSession(file, backbone=Architecture.RESNET50)
+        medmlx.extract(
+            model=model, image_path=image_path, output_dir=str(output), overwrite=overwrite,
+            output_selection=selection,
+        )
 
 
 def _application_checkpoint(
@@ -224,40 +158,40 @@ def test_pooled_batch_session_matches_full_features(
     ])
     expected = encoder.extract(prepared)
     np.testing.assert_array_equal(encoder.features(prepared), expected.features)
-    with medmlx.FeatureSession(folder, backbone=family) as session:
-        full = list(session.run_batch(image_paths=images, output_dirs=folders, batch_size=2))
+    with medmlx.load_model(model=MODEL_IDS[family], weights_path=folder) as session:
+        full = list(session.extract_batch(image_paths=images, output_dirs=folders, batch_size=2))
         for index, result in enumerate(full):
             assert result["details"]["schema_version"] == 3
             assert set(validate_outputs(result).artifacts) == set(result["outputs"])
             assert set(result["outputs"]) == {
-                "features_npy", "spatial_features_npy", "features_json", "predictions_npy",
+                "features", "spatial_features", "metadata", "predictions",
             }
             np.testing.assert_allclose(
-                np.load(result["outputs"]["features_npy"]), expected.features[index:index + 1],
+                np.load(result["outputs"]["features"]), expected.features[index:index + 1],
                 rtol=2e-4, atol=2e-5,
             )
 
         def no_reload(*_args: object, **_kwargs: object) -> NoReturn:
-            raise AssertionError("a warm FeatureSession reloaded its model")
+            raise AssertionError("a loaded model reloaded its network")
 
         monkeypatch.setattr(mlx_model, "RadImageNetMlx", no_reload)
-        pooled = list(session.run_batch(
+        pooled = list(session.extract_batch(
             image_paths=images, output_dirs=folders, batch_size=2,
             output_selection="pooled", overwrite=True,
         ))
         for index, result in enumerate(pooled):
-            assert set(result["outputs"]) == {"features_npy", "features_json"}
+            assert set(result["outputs"]) == {"features", "metadata"}
             assert result["details"].get("output_selection") == "pooled"
             assert "spatial_shape" not in result["details"]
             assert "classifier_output" not in result["details"]
             assert not (Path(folders[index]) / "spatial_features.npy").exists()
             assert not (Path(folders[index]) / "predictions.npy").exists()
             np.testing.assert_allclose(
-                np.load(result["outputs"]["features_npy"]), expected.features[index:index + 1],
+                np.load(result["outputs"]["features"]), expected.features[index:index + 1],
                 rtol=2e-4, atol=2e-5,
             )
-    with pytest.raises(InvalidInputError, match="closed"):
-        session.run(image_path=images[0], output_dir=str(tmp_path / "closed"))
+    with pytest.raises(RuntimeError, match="closed"):
+        session.extract(image_path=images[0], output_dir=str(tmp_path / "closed"))
 
 
 @pytest.mark.metal
@@ -268,18 +202,17 @@ def test_batch_runner_honors_fixed_checkpoint_batch(tmp_path: Path) -> None:
     checkpoint = folder / medmlx.CHECKPOINT_FILES[Architecture.RESNET50]
     _application_checkpoint(checkpoint, Architecture.RESNET50, fixed_shape=True, batch=2)
     images = [str(write_png(tmp_path, case)) for case in ("rgb", "gray")]
-    results = list(medmlx.run_batch(
-        image_paths=images, weights_path=str(folder),
-        output_dirs=[str(tmp_path / f"fixed-{i}") for i in range(2)],
-        batch_size=3, output_selection="pooled",
-    ))
-    assert len(results) == 2
-    assert np.load(results[0]["outputs"]["features_npy"]).shape == (1, 2048)
-    with pytest.raises(InvalidInputError, match="fixed checkpoint batch"):
-        list(medmlx.run_batch(
-            image_paths=images[:1], weights_path=str(folder),
-            output_dirs=[str(tmp_path / "tail")], batch_size=3,
+    with medmlx.load_model(model="radimagenet-resnet50", weights_path=str(folder)) as loaded:
+        results = list(loaded.extract_batch(
+            image_paths=images, output_dirs=[str(tmp_path / f"fixed-{i}") for i in range(2)],
+            batch_size=3, output_selection="pooled",
         ))
+        assert len(results) == 2
+        assert np.load(results[0]["outputs"]["features"]).shape == (1, 2048)
+        with pytest.raises(InvalidInputError, match="fixed checkpoint batch"):
+            list(loaded.extract_batch(
+                image_paths=images[:1], output_dirs=[str(tmp_path / "tail")], batch_size=3,
+            ))
 
 
 @pytest.mark.parametrize("problem", ["length", "duplicate", "input_alias", "output_alias", "bound"])
@@ -303,8 +236,9 @@ def test_batch_paths_reject_cross_job_collisions_before_weights(
     weights = tmp_path / "weights"
     weights.mkdir()
     (weights / medmlx.CHECKPOINT_FILES[Architecture.RESNET50]).write_bytes(b"unread")
+    loaded = medmlx.load_model(model="radimagenet-resnet50", weights_path=str(weights))
     with pytest.raises(InvalidInputError):
-        list(medmlx.run_batch(
+        list(loaded.extract_batch(
             image_paths=[str(path) for path in images], output_dirs=[str(path) for path in folders],
-            weights_path=str(weights), batch_size=0 if problem == "bound" else 2, overwrite=True,
+            batch_size=0 if problem == "bound" else 2, overwrite=True,
         ))

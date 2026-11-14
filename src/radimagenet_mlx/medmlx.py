@@ -1,30 +1,26 @@
-"""MedMLX declaration and end-to-end runner for RadImageNet backbone features.
+"""RadImageNet backbone features: the MedMLX operation, its reusable model and declarations.
 
 Image loading and standardization follow the upstream RadImageNet ACL example (a Keras
 ``ImageDataGenerator`` with Caffe-mode ``preprocess_input`` and ``rescale=1./255``).
 Default outputs are a globally average-pooled vector and a secondary spatial map;
-pooled-only jobs omit spatial/classifier transfer and artifacts. Four
-Keras backbone families are supported: ResNet50, DenseNet121, InceptionV3 and
-InceptionResNetV2; the checkpoint's architecture is detected automatically, or
-checked against an explicit ``backbone`` argument. Supported saved models may also
-include a Dense classifier.
+pooled-only jobs omit spatial/classifier transfer and artifacts. Four Keras backbone
+families are supported, one MedMLX model ID each: ResNet50, DenseNet121, InceptionV3
+and InceptionResNetV2. The checkpoint's detected architecture must match the model ID.
+Supported saved models may also include a Dense classifier.
 """
 
 from __future__ import annotations
 
 import json
-import os
-import shutil
 from collections.abc import Callable, Iterator, Sequence
-from itertools import combinations
 from pathlib import Path
-from tempfile import mkdtemp
 from typing import TYPE_CHECKING, Literal, Self, cast
 
 import numpy as np
 from medmlx_core.errors import AssetNotReadyError, InvalidInputError
+from medmlx_core.files import PathLike, input_file, output_targets, publish
 from medmlx_core.outputs import Artifact, artifact
-from medmlx_core.weights import weights_dir, weights_revision
+from medmlx_core.weights import model_folder, weights_revision
 from PIL import Image
 
 from radimagenet_mlx._typing import (
@@ -40,43 +36,51 @@ if TYPE_CHECKING:
     from radimagenet_mlx.mlx_model import Inference, RadImageNetMlx
 
 
-def _declaration(
-    model_id: str, label: str, runner: str, peak_memory_gb: float,
-) -> dict[str, str | float]:
-    """Build the MedMLX registration for one backbone runner.
+def _declaration(model_id: str, label: str, peak_memory_gb: float) -> dict[str, str | float]:
+    """Build the MedMLX registration for one backbone; all share ``extract``.
 
     ``peak_memory_gb`` is the measured MLX peak for a 1929x2207 chest radiograph.
     MedMLX reports it next to available memory but never refuses a run on it.
     """
     return {
         "id": model_id, "label": label, "task": "feature-extraction",
-        "run": f"radimagenet_mlx.medmlx:{runner}",
+        "run": "radimagenet_mlx.medmlx:extract",
+        "cohort": "radimagenet_mlx.medmlx:load_model",
         "summary": f"Radiology-pretrained {label} features for one 2D image.",
         "peak_memory_gb": peak_memory_gb,
     }
 
 
-RESNET50 = _declaration("radimagenet-resnet50", "RadImageNet ResNet50", "resnet50", 0.2)
-DENSENET121 = _declaration(
-    "radimagenet-densenet121", "RadImageNet DenseNet121", "densenet121", 0.2,
-)
-INCEPTIONV3 = _declaration("radimagenet-inceptionv3", "RadImageNet InceptionV3", "inceptionv3", 0.2)
+RESNET50 = _declaration("radimagenet-resnet50", "RadImageNet ResNet50", 0.2)
+DENSENET121 = _declaration("radimagenet-densenet121", "RadImageNet DenseNet121", 0.2)
+INCEPTIONV3 = _declaration("radimagenet-inceptionv3", "RadImageNet InceptionV3", 0.2)
 INCEPTIONRESNETV2 = _declaration(
-    "radimagenet-inceptionresnetv2", "RadImageNet InceptionResNetV2", "inceptionresnetv2", 0.5,
+    "radimagenet-inceptionresnetv2", "RadImageNet InceptionResNetV2", 0.5,
 )
 
+type ModelId = Literal[
+    "radimagenet-resnet50", "radimagenet-densenet121", "radimagenet-inceptionv3",
+    "radimagenet-inceptionresnetv2",
+]
+ARCHITECTURES: dict[str, Architecture] = {
+    "radimagenet-resnet50": Architecture.RESNET50,
+    "radimagenet-densenet121": Architecture.DENSENET121,
+    "radimagenet-inceptionv3": Architecture.INCEPTIONV3,
+    "radimagenet-inceptionresnetv2": Architecture.INCEPTIONRESNETV2,
+}
 
-# Default (height, width) of ``prepare_image``. ``run`` uses the checkpoint's fixed input
-# size, falling back to 224 x 224 (ResNet50, DenseNet121) or 299 x 299 (Inception).
+
+# Default (height, width) of ``prepare_image``. ``extract`` uses the checkpoint's fixed
+# input size, falling back to 224 x 224 (ResNet50, DenseNet121) or 299 x 299 (Inception).
 INPUT_SIZE = (224, 224)
-FEATURES_NPY = "features.npy"
-SPATIAL_FEATURES_NPY = "spatial_features.npy"
-FEATURES_JSON = "features.json"
-PREDICTIONS_NPY = "predictions.npy"
+# Every role is reserved on each run; roles a run does not write are removed.
+OUTPUT_FILES = {
+    "features": "features.npy",
+    "spatial_features": "spatial_features.npy",
+    "predictions": "predictions.npy",
+    "metadata": "features.json",
+}
 
-type Backbone = (
-    Architecture | Literal["resnet50", "densenet121", "inceptionv3", "inceptionresnetv2"]
-)
 type OutputSelection = Literal["all", "pooled"]
 
 # The published file for each backbone inside a weights folder.
@@ -131,146 +135,35 @@ def _prepare_rgb(image: Image.Image, size: tuple[int, int]) -> FloatArray:
     return array
 
 
-def _check_outputs(output: Path, overwrite: bool, inputs: tuple[Path, ...]) -> None:
-    """Reject a non-bool ``overwrite``, an invalid ``output_dir``, existing outputs
-    without overwrite, and outputs that alias an input or each other."""
-    if not isinstance(cast(object, overwrite), bool):
-        raise InvalidInputError("overwrite must be true or false")
-    if output.exists() and not output.is_dir():
-        raise InvalidInputError(f"output_dir is not a directory: {output}")
-    names = (FEATURES_NPY, SPATIAL_FEATURES_NPY, FEATURES_JSON, PREDICTIONS_NPY)
-    targets = tuple(output / name for name in names)
-    existing = [str(path) for path in targets if path.exists() or path.is_symlink()]
-    if existing and not overwrite:
-        raise InvalidInputError(
-            f"RadImageNet outputs already exist: {', '.join(existing)}; "
-            "pass overwrite=true to replace them"
-        )
-    if any(_paths_alias(path, source) for path in targets for source in inputs):
-        raise InvalidInputError("RadImageNet outputs must not alias inputs")
-    if any(_paths_alias(first, second) for first, second in combinations(targets, 2)):
-        raise InvalidInputError("RadImageNet outputs must not alias each other")
-
-
-def _architecture(backbone: Backbone | None) -> Architecture | None:
-    """Return the requested backbone, rejecting unknown names before any work."""
-    if backbone is None:
-        return None
-    try:
-        return Architecture(backbone)
-    except ValueError as error:
-        choices = ", ".join(architecture.value for architecture in Architecture)
-        raise InvalidInputError(f"backbone must be one of {choices}; got {backbone!r}") from error
-
-
-def _publish(
-    writes: dict[Path, Callable[[Path], object]], *, remove: tuple[Path, ...] = ()
-) -> None:
-    """Stage complete outputs and restore earlier files on publication failure.
-
-    Keep recovery links if restoration fails so the prior files can be recovered.
-    """
-    staging = Path(mkdtemp(prefix=".radimagenet-mlx-", dir=next(iter(writes)).parent))
-    cleanup = True
-    try:
-        partials = {path: staging / path.name for path in writes}
-        for path, write in writes.items():
-            write(partials[path])
-        backups: dict[Path, Path] = {}
-        for index, path in enumerate((*writes, *remove)):
-            if path.exists() or path.is_symlink():
-                backup = staging / f".backup-{index}"
-                os.link(path, backup, follow_symlinks=False)
-                backups[path] = backup
-        changed: list[Path] = []
-        try:
-            for path, partial in partials.items():
-                os.replace(partial, path)
-                changed.append(path)
-            for path in remove:
-                if path.exists() or path.is_symlink():
-                    path.unlink()
-                    changed.append(path)
-        except BaseException:
-            try:
-                for path in reversed(changed):
-                    backup = backups.get(path)
-                    if backup is None:
-                        path.unlink(missing_ok=True)
-                    else:
-                        os.replace(backup, path)
-            except OSError as error:
-                cleanup = False
-                raise OSError(f"Cannot restore outputs; backups retained at {staging}") from error
-            raise
-    finally:
-        if cleanup:
-            shutil.rmtree(staging)
-
-
-def _paths_alias(first: Path, second: Path) -> bool:
-    """Detect resolved-path or existing-file aliases between two paths."""
-    return first.resolve() == second.resolve() or (
-        first.exists() and second.exists() and first.samefile(second)
-    )
+def _architecture(model: str) -> Architecture:
+    """Return the model ID's backbone, rejecting unknown IDs before any work."""
+    architecture = ARCHITECTURES.get(model)
+    if architecture is None:
+        raise InvalidInputError(f"model must be one of {', '.join(ARCHITECTURES)}: {model!r}")
+    return architecture
 
 
 def _selection(value: str) -> OutputSelection:
-    """Admit the full legacy artifact set or pooled features only."""
+    """Admit the full artifact set or pooled features only."""
     if value not in ("all", "pooled"):
         raise InvalidInputError("output_selection must be 'all' or 'pooled'")
     return value
 
 
-def _checkpoint_path(value: str | Path, backbone: Architecture | None) -> Path:
-    """Select the weights file inside a ``weights_path`` folder without loading it.
-
-    With ``backbone`` the file is that backbone's entry in ``CHECKPOINT_FILES``.
-    Without it the folder must hold exactly one of the published files.
-    """
-    folder = Path(value).expanduser()
-    if folder.is_file():
-        raise InvalidInputError(
-            f"weights_path must be the folder that contains the weights file, not the file: "
-            f"{folder}; pass {folder.parent}"
-        )
-    if not folder.is_dir():
-        raise AssetNotReadyError(
-            f"Missing RadImageNet weights folder: {folder}", reason=f"missing {folder}",
-            hint="Pass weights_path as a folder containing the backbone's .safetensors file.",
-        )
-    if backbone is not None:
-        path = folder / CHECKPOINT_FILES[backbone]
-        if not path.is_file():
-            raise AssetNotReadyError(
-                f"RadImageNet weights folder must contain {path.name}: {folder}",
-                hint="Run medmlx setup, or pass a complete weights_path folder.",
-            )
-        return path
-    found = [folder / name for name in CHECKPOINT_FILES.values() if (folder / name).is_file()]
-    if len(found) > 1:
-        raise InvalidInputError(
-            f"RadImageNet weights folder holds {len(found)} backbones: {folder}; "
-            "pass backbone to choose one"
-        )
-    if not found:
-        raise AssetNotReadyError(
-            f"RadImageNet weights folder holds no RadImageNet-*_notop.safetensors file: {folder}",
-            hint="Pass weights_path as a folder containing the backbone's .safetensors file.",
-        )
-    return found[0]
-
-
-def _source_path(value: str | Path) -> Path:
-    """Require a local image path before decoding or loading a model."""
-    path = Path(value).expanduser()
+def _checkpoint(model: str, architecture: Architecture, weights_path: PathLike | None) -> Path:
+    """Return the backbone's file in its weights folder, downloading the folder if omitted."""
+    path = model_folder(model, weights_path) / CHECKPOINT_FILES[architecture]
     if not path.is_file():
-        raise InvalidInputError(f"Missing input image: {path}")
+        raise AssetNotReadyError(
+            f"RadImageNet weights folder must contain {path.name}: {path.parent}",
+            reason=f"missing {path.name}",
+            hint="Run medmlx setup, or pass a weights_path folder that contains it.",
+        )
     return path
 
 
 def _path_ids(path: Path) -> set[Path | tuple[int, int]]:
-    """Identify resolved paths and existing hard links during cohort preflight."""
+    """Identify resolved paths and existing hard links during batch preflight."""
     result: set[Path | tuple[int, int]] = {path.resolve()}
     if path.exists():
         stat = path.stat()
@@ -278,49 +171,48 @@ def _path_ids(path: Path) -> set[Path | tuple[int, int]]:
     return result
 
 
-def _batch_paths(
-    image_paths: Sequence[str | Path], output_dirs: Sequence[str | Path], checkpoint: Path,
+def _batch_targets(
+    image_paths: Sequence[PathLike], output_dirs: Sequence[PathLike], checkpoint: Path,
     overwrite: bool,
-) -> tuple[tuple[Path, Path], ...]:
-    """Preflight all cohort paths in linear space/time before any output is replaced."""
+) -> tuple[tuple[Path, dict[str, Path]], ...]:
+    """Preflight all batch paths in linear space/time before any output is replaced."""
     if not image_paths or len(image_paths) != len(output_dirs):
         raise InvalidInputError("image_paths and output_dirs must have the same nonzero length")
-    sources = tuple(_source_path(value) for value in image_paths)
-    jobs = tuple(zip(sources, (Path(value).expanduser() for value in output_dirs), strict=True))
+    sources = tuple(input_file("image_paths", value) for value in image_paths)
     inputs = _path_ids(checkpoint)
     for source in sources:
         inputs.update(_path_ids(source))
-    targets: set[Path | tuple[int, int]] = set()
-    for source, output in jobs:
-        _check_outputs(output, overwrite, (source, checkpoint))
-        for name in (FEATURES_NPY, SPATIAL_FEATURES_NPY, FEATURES_JSON, PREDICTIONS_NPY):
-            identities = _path_ids(output / name)
+    jobs: list[tuple[Path, dict[str, Path]]] = []
+    seen: set[Path | tuple[int, int]] = set()
+    for source, output_dir in zip(sources, output_dirs, strict=True):
+        targets = output_targets(
+            output_dir, OUTPUT_FILES, overwrite=overwrite, inputs=[source, checkpoint]
+        )
+        for path in targets.values():
+            identities = _path_ids(path)
             if identities & inputs:
-                raise InvalidInputError("RadImageNet outputs must not alias any cohort input")
-            if identities & targets:
-                raise InvalidInputError("RadImageNet cohort outputs must not alias each other")
-            targets.update(identities)
-    return jobs
+                raise InvalidInputError("RadImageNet outputs must not alias any batch input")
+            if identities & seen:
+                raise InvalidInputError("RadImageNet batch outputs must not alias each other")
+            seen.update(identities)
+        jobs.append((source, targets))
+    return tuple(jobs)
 
 
-class FeatureSession:
-    """Reuse one lazily loaded native model for sequential image or batch jobs.
+class RadImageNetModel:
+    """One RadImageNet backbone reused for serial images or batches until closed.
 
-    Use as a context manager to release model references when the cohort ends.
-    Inputs are fully decoded before inference; the first image is decoded before
-    the model loads. ``run_batch`` bounds decoded/prepared images and native
-    activations by ``batch_size`` and yields the usual result per image.
+    The weights folder is resolved (downloading it if omitted) when the model is
+    created; the network loads after the first image decodes. A checkpoint file
+    changed after that is refused. :meth:`extract` has the :func:`extract` contract
+    without ``model`` and ``weights_path``; :meth:`extract_batch` bounds decoded
+    images and native activations by ``batch_size``.
     """
 
-    def __init__(self, weights_path: str | Path, *, backbone: Backbone | None = None):
-        """Validate a weights folder and architecture without loading native weights.
-
-        ``weights_path`` is the folder that contains the weights file; ``checkpoint``
-        is the file selected from it (see ``_checkpoint_path``). Passing a file raises
-        ``InvalidInputError``.
-        """
-        self._required = _architecture(backbone)
-        self.checkpoint = _checkpoint_path(weights_path, self._required)
+    def __init__(self, *, model: ModelId, weights_path: PathLike | None = None) -> None:
+        """Resolve the backbone's checkpoint without loading native weights."""
+        self._architecture = _architecture(model)
+        self.checkpoint = _checkpoint(model, self._architecture, weights_path)
         self._encoder: RadImageNetMlx | None = None
         self._closed = False
         stat = self.checkpoint.stat()
@@ -329,65 +221,58 @@ class FeatureSession:
         )
 
     def __enter__(self) -> Self:
-        """Return the session; a closed session raises ``InvalidInputError``."""
+        """Return the model; a closed model raises ``RuntimeError``."""
         if self._closed:
-            raise InvalidInputError("FeatureSession is closed")
+            raise RuntimeError("RadImageNet model is closed")
         return self
 
     def __exit__(self, *_exception: object) -> None:
-        """Close the session."""
+        """Close the model."""
         self.close()
 
     def close(self) -> None:
-        """Release this session's model and prevent further work."""
+        """Release the network; later calls raise ``RuntimeError``."""
         self._encoder = None
         self._closed = True
 
-    def _model(self) -> RadImageNetMlx:
-        """Load once after input decode, rejecting changes to an already bound file."""
+    def _network(self) -> RadImageNetMlx:
+        """Load once after input decode, rejecting changes to the bound file."""
         if self._closed:
-            raise InvalidInputError("FeatureSession is closed")
+            raise RuntimeError("RadImageNet model is closed")
         stat = self.checkpoint.stat()
         identity = (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_dev, stat.st_ino)
         if identity != self._identity:
-            raise AssetNotReadyError("RadImageNet checkpoint changed; create a new FeatureSession")
+            raise AssetNotReadyError("RadImageNet checkpoint changed; load the model again")
         if self._encoder is None:
             from radimagenet_mlx.mlx_model import RadImageNetMlx
 
-            self._encoder = RadImageNetMlx(self.checkpoint, architecture=self._required)
+            self._encoder = RadImageNetMlx(self.checkpoint, architecture=self._architecture)
         return self._encoder
 
-    def run(
-        self, *, image_path: str | Path, output_dir: str | Path,
-        output_selection: OutputSelection = "all",
-        overwrite: bool = False, _decoded: Image.Image | None = None,
+    def extract(
+        self, *, image_path: PathLike, output_dir: PathLike,
+        output_selection: OutputSelection = "all", overwrite: bool = False,
     ) -> RunResult:
-        """Write one image's selected artifacts, preserving the default full output contract."""
+        """Write one image's features with the loaded network; see :func:`extract`."""
         selected = _selection(output_selection)
-        source, output = _source_path(image_path), Path(output_dir).expanduser()
-        _check_outputs(output, overwrite, (source, self.checkpoint))
-        if _decoded is None:
-            with _decode_image(source) as decoded:
-                return self._run_decoded(decoded, output, selected)
-        return self._run_decoded(_decoded, output, selected)
+        source = input_file("image_path", image_path)
+        targets = output_targets(
+            output_dir, OUTPUT_FILES, overwrite=overwrite, inputs=[source, self.checkpoint]
+        )
+        with _decode_image(source) as decoded:
+            return _extract_image(self._network(), self.checkpoint, decoded, targets, selected)
 
-    def _run_decoded(self, decoded: Image.Image, output: Path, selected: str) -> RunResult:
-        encoder = self._model()
-        array = _prepare_rgb(decoded, encoder.graph.input_size)
-        features, spatial, predictions = _infer(encoder, array, selected)
-        return _write_features(encoder, self.checkpoint, output, features, spatial, predictions)
-
-    def run_batch(
-        self, *, image_paths: Sequence[str | Path], output_dirs: Sequence[str | Path],
+    def extract_batch(
+        self, *, image_paths: Sequence[PathLike], output_dirs: Sequence[PathLike],
         batch_size: int = 8, output_selection: OutputSelection = "all", overwrite: bool = False,
     ) -> Iterator[RunResult]:
-        """Stream real model batches, yielding schema-3 artifacts per image in input order.
+        """Stream model batches, yielding one :func:`extract` result per image in order.
 
-        ``output_dirs`` provides one distinct folder per input. Fixed-batch models
-        use their declared batch size, which must fit the bound and divide the
-        cohort length. Each image stages all files before publication; recoverable
-        publication failures restore its earlier files. Later failures retain
-        earlier completed jobs. Exhaust or close the iterator before closing this session.
+        ``output_dirs`` gives one distinct folder per image; every path is checked
+        before the first output is replaced. Fixed-batch checkpoints use their
+        declared batch size, which must fit ``batch_size`` and divide the image count.
+        Each image's files are published together; a later failure keeps the
+        images already completed. Exhaust or close the iterator before closing the model.
         """
         selected = _selection(output_selection)
         if (
@@ -396,10 +281,10 @@ class FeatureSession:
             or batch_size < 1
         ):
             raise InvalidInputError("batch_size must be a positive integer")
-        jobs = _batch_paths(image_paths, output_dirs, self.checkpoint, overwrite)
+        jobs = _batch_targets(image_paths, output_dirs, self.checkpoint, overwrite)
         first: Image.Image | None = _decode_image(jobs[0][0])
         try:
-            encoder = self._model()
+            encoder = self._network()
             spec = encoder.graph.nodes[0].operation
             if not isinstance(spec, Input):
                 raise AssetNotReadyError("RadImageNet graph must start with an input")
@@ -411,7 +296,7 @@ class FeatureSession:
             for start in range(0, len(jobs), capacity):
                 chunk = jobs[start : start + capacity]
                 array = np.empty((len(chunk), *encoder.graph.input_size, 3), dtype=np.float32)
-                for index, (source, _output) in enumerate(chunk):
+                for index, (source, _targets) in enumerate(chunk):
                     if first is not None:
                         array[index] = _prepare_rgb(first, encoder.graph.input_size)[0]
                         first.close()
@@ -420,9 +305,9 @@ class FeatureSession:
                         with _decode_image(source) as decoded:
                             array[index] = _prepare_rgb(decoded, encoder.graph.input_size)[0]
                 features, spatial, predictions = _infer(encoder, array, selected)
-                for index, (_source, output) in enumerate(chunk):
+                for index, (_source, targets) in enumerate(chunk):
                     yield _write_features(
-                        encoder, self.checkpoint, output, features[index : index + 1],
+                        encoder, self.checkpoint, targets, features[index : index + 1],
                         None if spatial is None else spatial[index : index + 1],
                         None if predictions is None else predictions[index : index + 1],
                     )
@@ -432,104 +317,97 @@ class FeatureSession:
                 first.close()
 
 
+def load_model(*, model: ModelId, weights_path: PathLike | None = None) -> RadImageNetModel:
+    """Load one RadImageNet backbone for several images, or for a MedMLX cohort.
+
+    ``model`` and ``weights_path`` have the meanings they have in :func:`extract`.
+    Close the returned model, or use it as a context manager, to release it.
+    """
+    return RadImageNetModel(model=model, weights_path=weights_path)
+
+
 def _infer(
     encoder: RadImageNetMlx, array: FloatArray, selected: str,
 ) -> tuple[FloatArray, FloatArray | None, FloatArray | None]:
-    """Select the existing pooled or full native graph boundary before host transfer."""
+    """Select the pooled or full native graph boundary before host transfer."""
     if selected == "pooled":
         return encoder.features(array), None, None
     result: Inference = encoder.extract(array)
     return result.features, result.spatial, result.predictions
 
 
-def run(
+def extract(
     *,
-    image_path: str | Path,
-    weights_path: str | Path,
-    output_dir: str | Path,
-    backbone: Backbone | None = None,
+    model: ModelId,
+    image_path: PathLike,
+    output_dir: PathLike,
+    weights_path: PathLike | None = None,
     overwrite: bool = False,
     output_selection: OutputSelection = "all",
 ) -> RunResult:
-    """Extract native backbone features and any supplied classifier from a saved model.
+    """Extract one 2D image's RadImageNet backbone features and any saved classifier output.
 
-    Select the weights file inside the ``weights_path`` folder by ``backbone``, or,
-    without ``backbone``, the only RadImageNet file in it; the architecture is
-    detected from the file and checked against ``backbone``.
-    Fixed checkpoint dimensions govern resizing, otherwise use 224 for ResNet
-    and DenseNet or 299 for Inception families. All use the upstream preprocessing
-    described in ``prepare_image``. Outputs carry schema version 3. In full-output
-    mode ``predictions.npy`` exists only for a saved classifier. Existing outputs require explicit
-    ``overwrite=True``. Output aliases of either input or another output are
-    rejected before inference. These checks do not prevent concurrent path changes.
+    Fixed checkpoint dimensions govern resizing, otherwise 224 for ResNet and DenseNet
+    or 299 for Inception families, with the upstream preprocessing described in
+    ``prepare_image``. Outputs carry schema version 3. Every argument, the image decode
+    and the output paths are checked before weights download.
 
     Args:
-        image_path: Path to a Pillow-readable image; the first frame is used.
-        weights_path: Local folder containing the backbone's safetensors file (graph
+        model: ``radimagenet-resnet50``, ``radimagenet-densenet121``,
+            ``radimagenet-inceptionv3`` or ``radimagenet-inceptionresnetv2``.
+        image_path: Pillow-readable image; the first frame is used.
+        output_dir: Folder for the outputs; created if missing.
+        weights_path: Weights folder holding the backbone's safetensors file (graph
             metadata and float32 weights), such as ``RadImageNet-ResNet50_notop.safetensors``.
-            A file path raises ``InvalidInputError``. Weights are not downloaded.
-        output_dir: Directory for pooled and spatial features and metadata;
-            classifier predictions are also written when present in the model.
-        backbone: Architecture to require: ``resnet50``, ``densenet121``,
-            ``inceptionv3`` or ``inceptionresnetv2``. Defaults to ``None`` for
-            automatic detection.
-        overwrite: Allow existing output files to be replaced (default ``False``);
-            a stale predictions file is removed when the selected model has no classifier.
-            Pooled-only output removes earlier spatial and prediction files on success.
-            New outputs replace earlier ones only after the whole run succeeds.
-        output_selection: ``"all"`` (default) retains spatial features and any
-            classifier output; ``"pooled"`` writes only pooled features and metadata.
+            ``None`` downloads MedMLX/radimagenet-mlx.
+        overwrite: Replace existing outputs; files a run does not write (spatial
+            features, predictions) are then removed.
+        output_selection: ``"all"`` (default) writes spatial features and any classifier
+            output; ``"pooled"`` writes only pooled features and metadata.
 
     Returns:
-        ``{"outputs": {...}, "artifacts": {...}, "details": {...}}`` with absolute POSIX
-        output paths, an artifact for each (arrays are ``feature_tensor``,
-        ``features_json`` is a ``report``; none has a coordinate space) and the
-        metadata also written to ``features.json``.
+        ``{"outputs": {...}, "artifacts": {...}, "details": {...}}`` with roles
+        ``features`` (pooled ``(1, C)`` float32), ``metadata`` (``features.json``),
+        ``spatial_features`` (``(1, H, W, C)``) unless pooled, and ``predictions``
+        when the checkpoint has a classifier. ``details`` is the metadata.
 
     Raises:
-        InvalidInputError: Missing or unreadable image, unknown ``backbone``,
-            ``overwrite`` not a bool, ``output_dir`` not a directory, existing outputs
-            without ``overwrite``, output aliases, ``weights_path`` is a file, or the
-            folder holds several backbones and ``backbone`` is not given.
+        InvalidInputError: Unknown ``model``, missing or unreadable image, or invalid
+            or existing output paths.
         AssetNotReadyError: Missing weights folder or file, invalid checkpoint, or its
-            architecture is not the requested ``backbone``.
+            architecture is not the model's backbone.
     """
-
-    _source_path(image_path)
-    _selection(output_selection)
-    with FeatureSession(weights_path, backbone=backbone) as session:
-        return session.run(
-            image_path=image_path, output_dir=output_dir,
-            overwrite=overwrite, output_selection=output_selection,
+    architecture = _architecture(model)
+    selected = _selection(output_selection)
+    source = input_file("image_path", image_path)
+    output_targets(output_dir, OUTPUT_FILES, overwrite=overwrite, inputs=[source])
+    # Decode first so an unreadable image fails before any download.
+    with _decode_image(source) as decoded:
+        checkpoint = _checkpoint(model, architecture, weights_path)
+        targets = output_targets(
+            output_dir, OUTPUT_FILES, overwrite=overwrite, inputs=[source, checkpoint]
         )
+        from radimagenet_mlx.mlx_model import RadImageNetMlx
+
+        encoder = RadImageNetMlx(checkpoint, architecture=architecture)
+        return _extract_image(encoder, checkpoint, decoded, targets, selected)
 
 
-def run_batch(
-    *, image_paths: Sequence[str | Path], weights_path: str | Path,
-    output_dirs: Sequence[str | Path], batch_size: int = 8, backbone: Backbone | None = None,
-    output_selection: OutputSelection = "all", overwrite: bool = False,
-) -> Iterator[RunResult]:
-    """Load one model for a bounded cohort and yield the usual per-image results.
-
-    ``weights_path`` is a weights folder, as in ``run``. Each image has its own
-    ``output_dirs`` folder. Consume or close the iterator
-    to release its model; use ``FeatureSession`` to reuse it across multiple cohorts.
-    See ``FeatureSession.run_batch`` for fixed-batch and partial-completion behavior.
-    """
-    with FeatureSession(weights_path, backbone=backbone) as session:
-        yield from session.run_batch(
-            image_paths=image_paths, output_dirs=output_dirs, batch_size=batch_size,
-            output_selection=output_selection, overwrite=overwrite,
-        )
+def _extract_image(
+    encoder: RadImageNetMlx, checkpoint: Path, decoded: Image.Image, targets: dict[str, Path],
+    selected: str,
+) -> RunResult:
+    """Prepare one decoded image, run the selected graph boundary and publish its files."""
+    array = _prepare_rgb(decoded, encoder.graph.input_size)
+    features, spatial, predictions = _infer(encoder, array, selected)
+    return _write_features(encoder, checkpoint, targets, features, spatial, predictions)
 
 
 def _write_features(
-    encoder: RadImageNetMlx, checkpoint: Path, output: Path,
+    encoder: RadImageNetMlx, checkpoint: Path, targets: dict[str, Path],
     features: FloatArray, spatial_features: FloatArray | None, predictions: FloatArray | None,
 ) -> RunResult:
-    """Publish one image's selected arrays while preserving the default schema and names."""
-    features_npy, spatial_features_npy = output / FEATURES_NPY, output / SPATIAL_FEATURES_NPY
-    features_json, predictions_npy = output / FEATURES_JSON, output / PREDICTIONS_NPY
+    """Publish one image's selected arrays and metadata together."""
     detected = encoder.graph.architecture
     metadata: FeatureMetadata = {
         "schema_version": 3,
@@ -545,138 +423,34 @@ def _write_features(
         "backend": "mlx",
     }
     writes: dict[Path, Callable[[Path], object]] = {
-        features_npy: lambda path: np.save(path, features),
+        targets["features"]: lambda path: np.save(path, features),
     }
     if spatial_features is not None:
-        writes[spatial_features_npy] = lambda path: np.save(path, spatial_features)
+        writes[targets["spatial_features"]] = lambda path: np.save(path, spatial_features)
         metadata["spatial_shape"] = list(spatial_features.shape)
     else:
         metadata["output_selection"] = "pooled"
     if predictions is not None:
-        writes[predictions_npy] = lambda path: np.save(path, predictions)
+        writes[targets["predictions"]] = lambda path: np.save(path, predictions)
         metadata["classifier_output"] = encoder.graph.output
         metadata["classification_shape"] = list(predictions.shape)
-    writes[features_json] = lambda path: path.write_text(
+    writes[targets["metadata"]] = lambda path: path.write_text(
         json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8"
     )
-    output.mkdir(parents=True, exist_ok=True)
-    remove = tuple(
-        path for path, absent in (
-            (spatial_features_npy, spatial_features is None),
-            (predictions_npy, predictions is None),
-        ) if absent
-    )
-    _publish(writes, remove=remove)
+    publish(writes, remove=[path for path in targets.values() if path not in writes])
     outputs: FeatureOutputs = {
-        "features_npy": features_npy.resolve().as_posix(),
-        "features_json": features_json.resolve().as_posix(),
+        "features": targets["features"].as_posix(),
+        "metadata": targets["metadata"].as_posix(),
     }
-    if spatial_features is not None:
-        outputs["spatial_features_npy"] = spatial_features_npy.resolve().as_posix()
-    if predictions is not None:
-        outputs["predictions_npy"] = predictions_npy.resolve().as_posix()
+    tensor = artifact(kind="feature_tensor", coordinate_space="not_applicable")
     artifacts: dict[str, Artifact] = {
-        "features_npy": artifact(kind="feature_tensor", coordinate_space="not_applicable"),
-        "features_json": artifact(kind="report", coordinate_space="not_applicable"),
+        "features": tensor,
+        "metadata": artifact(kind="report", coordinate_space="not_applicable"),
     }
     if spatial_features is not None:
-        artifacts["spatial_features_npy"] = artifact(
-            kind="feature_tensor", coordinate_space="not_applicable",
-        )
+        outputs["spatial_features"] = targets["spatial_features"].as_posix()
+        artifacts["spatial_features"] = tensor
     if predictions is not None:
-        artifacts["predictions_npy"] = artifact(
-            kind="feature_tensor", coordinate_space="not_applicable",
-        )
+        outputs["predictions"] = targets["predictions"].as_posix()
+        artifacts["predictions"] = tensor
     return {"outputs": outputs, "artifacts": artifacts, "details": metadata}
-
-
-
-def _run_backbone(
-    model_id: str, architecture: Architecture, *, image_path: str | Path,
-    output_dir: str | Path, weights_path: str | Path | None, overwrite: bool,
-    output_selection: OutputSelection,
-) -> RunResult:
-    """Resolve the shared model folder; the session selects the backbone's file in it."""
-    source = _source_path(image_path)
-    _selection(output_selection)
-    _check_outputs(Path(output_dir).expanduser(), overwrite, (source,))
-    with _decode_image(source) as decoded:
-        directory = (Path(weights_path).expanduser()
-                     if weights_path is not None else weights_dir(model_id))
-        with FeatureSession(directory, backbone=architecture) as session:
-            return session.run(
-                image_path=source, output_dir=output_dir, overwrite=overwrite,
-                output_selection=output_selection, _decoded=decoded,
-            )
-
-
-def resnet50(
-    *, image_path: str | Path, output_dir: str | Path, weights_path: str | Path | None = None,
-    overwrite: bool = False,
-    output_selection: OutputSelection = "all",
-) -> RunResult:
-    """Extract ResNet50 features; omitted weights download MedMLX/radimagenet-mlx.
-
-    Args:
-        image_path: Pillow-readable 2D image.
-        output_dir: Directory for features and metadata; existing outputs require overwrite.
-        weights_path: Folder containing RadImageNet-ResNet50_notop.safetensors; None downloads it.
-        overwrite: Allow replacing existing outputs.
-        output_selection: ``"all"`` (default) or ``"pooled"`` for features and metadata only.
-    """
-    return _run_backbone(
-        "radimagenet-resnet50", Architecture.RESNET50,
-        image_path=image_path, output_dir=output_dir,
-        weights_path=weights_path, overwrite=overwrite, output_selection=output_selection,
-    )
-
-
-def densenet121(
-    *, image_path: str | Path, output_dir: str | Path, weights_path: str | Path | None = None,
-    overwrite: bool = False,
-    output_selection: OutputSelection = "all",
-) -> RunResult:
-    """Extract DenseNet121 features from an optional weights_path folder.
-
-    Omit weights_path to download MedMLX/radimagenet-mlx. Explicit folders
-    must contain RadImageNet-DenseNet121_notop.safetensors. Input/output behavior matches resnet50.
-    """
-    return _run_backbone(
-        "radimagenet-densenet121", Architecture.DENSENET121,
-        image_path=image_path, output_dir=output_dir,
-        weights_path=weights_path, overwrite=overwrite, output_selection=output_selection,
-    )
-
-
-def inceptionv3(
-    *, image_path: str | Path, output_dir: str | Path, weights_path: str | Path | None = None,
-    overwrite: bool = False,
-    output_selection: OutputSelection = "all",
-) -> RunResult:
-    """Extract InceptionV3 features from an optional weights_path folder.
-
-    Omit weights_path to download MedMLX/radimagenet-mlx. Explicit folders
-    must contain RadImageNet-InceptionV3_notop.safetensors. Input/output behavior matches resnet50.
-    """
-    return _run_backbone(
-        "radimagenet-inceptionv3", Architecture.INCEPTIONV3,
-        image_path=image_path, output_dir=output_dir,
-        weights_path=weights_path, overwrite=overwrite, output_selection=output_selection,
-    )
-
-
-def inceptionresnetv2(
-    *, image_path: str | Path, output_dir: str | Path, weights_path: str | Path | None = None,
-    overwrite: bool = False,
-    output_selection: OutputSelection = "all",
-) -> RunResult:
-    """Extract InceptionResNetV2 features from an optional weights_path folder.
-
-    Omit weights_path to download MedMLX/radimagenet-mlx. Explicit folders
-    must contain RadImageNet-IRV2_notop.safetensors. Input/output behavior matches resnet50.
-    """
-    return _run_backbone(
-        "radimagenet-inceptionresnetv2", Architecture.INCEPTIONRESNETV2,
-        image_path=image_path, output_dir=output_dir,
-        weights_path=weights_path, overwrite=overwrite, output_selection=output_selection,
-    )

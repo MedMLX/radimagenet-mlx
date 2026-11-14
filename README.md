@@ -38,14 +38,13 @@ uv pip install "radimagenet-mlx>=0.3.4"
 
 ## Run
 
-Each backbone has its own registered model ID:
-`radimagenet-resnet50`, `radimagenet-densenet121`, `radimagenet-inceptionv3` and
-`radimagenet-inceptionresnetv2`. Their runners take the same arguments:
+Each backbone has its own model ID: `radimagenet-resnet50`, `radimagenet-densenet121`,
+`radimagenet-inceptionv3` and `radimagenet-inceptionresnetv2`.
 
 ```python
-from radimagenet_mlx.medmlx import resnet50
+from radimagenet_mlx import extract
 
-result = resnet50(image_path="image.png", output_dir="outputs")
+result = extract(model="radimagenet-resnet50", image_path="image.png", output_dir="outputs")
 ```
 
 Only the selected backbone's weights download from `MedMLX/radimagenet-mlx` on first
@@ -56,17 +55,18 @@ pass a folder containing the backbone's weights file as `weights_path`.
 
 | Argument | Meaning |
 | --- | --- |
+| `model` | One of the four model IDs above |
 | `image_path` | One Pillow-readable 2D image; a multi-frame file uses its first frame |
 | `output_dir` | Directory for the outputs |
 | `weights_path` | Optional folder containing the backbone's `.safetensors` file |
 | `overwrite` | `False` by default, which refuses to replace existing outputs |
 | `output_selection` | `"all"` (default), or `"pooled"` to write only `features.npy` and metadata |
 
-| Output | File | Contents |
+| Output role | File | Contents |
 | --- | --- | --- |
-| `features_npy` | `features.npy` | float32 `(1, C)` average-pooled vector |
-| `spatial_features_npy` | `spatial_features.npy` | float32 `(1, H, W, C)` last spatial map |
-| `features_json` | `features.json` | Run metadata, also returned as `details` |
+| `features` | `features.npy` | float32 `(1, C)` average-pooled vector |
+| `spatial_features` | `spatial_features.npy` | float32 `(1, H, W, C)` last spatial map |
+| `metadata` | `features.json` | Run metadata, also returned as `details` |
 
 The result also holds an `artifacts` entry for each output: `feature_tensor` for the arrays and `report` for the metadata.
 
@@ -88,28 +88,29 @@ The published checkpoints declare 224×224 inputs:
 - Missing or unreadable images raise `InvalidInputError`; missing or mismatched weights
   raise `AssetNotReadyError`.
 
-For a cohort, `run_batch` loads one model and streams actual model batches. Supply
-one output folder per image; each folder keeps the single-image artifact format.
-The iterator publishes completed images in input order and retains them if a later
-image fails. Consume or close it to release the model.
+### Several images
+
+`load_model` loads one backbone and keeps it loaded until closed. Its `extract` takes the
+same arguments as `extract` without `model` and `weights_path`; `extract_batch` streams
+model batches with one output folder per image, each in the single-image format. It
+checks every path first, publishes images in input order and keeps completed images if
+a later one fails.
 
 ```python
-from radimagenet_mlx.medmlx import FeatureSession
+from radimagenet_mlx import load_model
 
-with FeatureSession("weights", backbone="resnet50") as session:
-    for result in session.run_batch(
+with load_model(model="radimagenet-resnet50") as model:
+    for result in model.extract_batch(
         image_paths=["slice1.png", "slice2.png"],
         output_dirs=["out/slice1", "out/slice2"],
         batch_size=2,
         output_selection="pooled",
     ):
-        print(result["outputs"]["features_npy"])
+        print(result["outputs"]["features"])
 ```
 
-A session can run further images or cohorts with the same loaded checkpoint.
-`weights_path` is the folder containing the weights file, here `weights/`. `run_batch` from
-the same module takes the same folder and manages its own session. Fixed-batch checkpoints use their declared batch size;
-it must fit `batch_size` and divide the cohort length.
+Fixed-batch checkpoints use their declared batch size; it must fit `batch_size` and
+divide the image count.
 
 ### Local weights
 
@@ -119,26 +120,26 @@ Download one of the [native weights](https://huggingface.co/MedMLX/radimagenet-m
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download
-from radimagenet_mlx.medmlx import run
+from radimagenet_mlx import extract
 
 weights = hf_hub_download(
     "MedMLX/radimagenet-mlx", "RadImageNet-ResNet50_notop.safetensors",
     revision="fd1c2663266360c899211c9a23ffc24f805d282a",
 )
-result = run(
+result = extract(
+    model="radimagenet-resnet50",
     image_path="slice.png",
     weights_path=Path(weights).parent,
     output_dir="features",
 )
-print(result["outputs"]["features_npy"])
+print(result["outputs"]["features"])
 ```
 
-`weights_path` is always a folder; passing the file raises `InvalidInputError`. The folder
-must contain the backbone's published file name, listed above. The safetensors file must contain float32 MLX-layout weights and declarative
-`model_config` graph metadata. The published bundle contains four encoders without
-classification heads. Classifier predictions require a checkpoint that includes a classifier.
-`run` uses the only RadImageNet file in the folder, or takes `backbone="resnet50"`, `"densenet121"`,
-`"inceptionv3"` or `"inceptionresnetv2"`.
+`weights_path` is always a folder that holds the backbone's published file name, listed
+above. The safetensors file must contain float32 MLX-layout weights and declarative
+`model_config` graph metadata; its detected architecture must match `model`. The
+published bundle contains four encoders without classification heads. Classifier
+predictions require a checkpoint that includes a classifier.
 
 ### Python API
 

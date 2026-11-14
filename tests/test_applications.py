@@ -216,11 +216,14 @@ def test_registered_runner_writes_features(tmp_path: Path, runner: str) -> None:
         image.write_bytes(payload["png::rgb"].tobytes())
     folder.mkdir()
     checkpoint(folder / WEIGHTS[runner], recipe(runner, "spatial"))
-    result = getattr(medmlx, runner)(
-        image_path=str(image), output_dir=str(tmp_path / "out"), weights_path=str(folder),
+    result = medmlx.extract(
+        model=cast(medmlx.ModelId, f"radimagenet-{runner}"), image_path=str(image),
+        output_dir=str(tmp_path / "out"), weights_path=str(folder),
     )
     assert result["details"]["backbone"] == runner
-    spatial = np.load(result["outputs"]["spatial_features_npy"], allow_pickle=False)
-    features = np.load(result["outputs"]["features_npy"], allow_pickle=False)
+    outputs = result["outputs"]
+    assert "spatial_features" in outputs
+    spatial = np.load(outputs["spatial_features"], allow_pickle=False)
+    features = np.load(result["outputs"]["features"], allow_pickle=False)
     assert spatial.ndim == 4 and features.shape == (1, spatial.shape[-1])
     assert np.isfinite(features).all()

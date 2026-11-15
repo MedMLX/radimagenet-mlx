@@ -42,9 +42,9 @@ Each backbone has its own model ID: `radimagenet-resnet50`, `radimagenet-densene
 `radimagenet-inceptionv3` and `radimagenet-inceptionresnetv2`.
 
 ```python
-from radimagenet_mlx import extract
+from radimagenet_mlx import run
 
-result = extract(model="radimagenet-resnet50", image_path="image.png", output_dir="outputs")
+result = run(model="radimagenet-resnet50", image_path="image.png", output_dir="outputs")
 ```
 
 Only the selected backbone's weights download from `MedMLX/radimagenet-mlx` on first
@@ -90,8 +90,8 @@ The published checkpoints declare 224×224 inputs:
 
 ### Several images
 
-`load_model` loads one backbone and keeps it loaded until closed. Its `extract` takes the
-same arguments as `extract` without `model` and `weights_path`; `extract_batch` streams
+`load_model` loads one backbone and keeps it loaded until closed. Its `run` takes the
+same arguments as `run` without `model` and `weights_path`; `run_batch` streams
 model batches with one output folder per image, each in the single-image format. It
 checks every path first, publishes images in input order and keeps completed images if
 a later one fails.
@@ -100,7 +100,7 @@ a later one fails.
 from radimagenet_mlx import load_model
 
 with load_model(model="radimagenet-resnet50") as model:
-    for result in model.extract_batch(
+    for result in model.run_batch(
         image_paths=["slice1.png", "slice2.png"],
         output_dirs=["out/slice1", "out/slice2"],
         batch_size=2,
@@ -120,13 +120,13 @@ Download one of the [native weights](https://huggingface.co/MedMLX/radimagenet-m
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download
-from radimagenet_mlx import extract
+from radimagenet_mlx import run
 
 weights = hf_hub_download(
     "MedMLX/radimagenet-mlx", "RadImageNet-ResNet50_notop.safetensors",
     revision="fd1c2663266360c899211c9a23ffc24f805d282a",
 )
-result = extract(
+result = run(
     model="radimagenet-resnet50",
     image_path="slice.png",
     weights_path=Path(weights).parent,

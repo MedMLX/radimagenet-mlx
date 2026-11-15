@@ -47,7 +47,7 @@ def test_resnet50_runner_matches_keras(
     (folder / "RadImageNet-ResNet50_notop.safetensors").symlink_to(checkpoint)
     output = tmp_path / "out"
     output.mkdir()
-    result = medmlx.extract(
+    result = medmlx.run(
         model="radimagenet-resnet50", image_path=str(write_png(tmp_path, case)),
         output_dir=str(output), weights_path=str(folder),
         output_selection=cast(medmlx.OutputSelection, output_selection),
@@ -113,7 +113,7 @@ def test_runner_rejects_invalid_arguments_before_download(
         medmlx.OutputSelection, "unknown" if problem == "output_selection" else "all"
     )
     with pytest.raises(InvalidInputError):
-        medmlx.extract(
+        medmlx.run(
             model=model, image_path=image_path, output_dir=str(output), overwrite=overwrite,
             output_selection=selection,
         )
@@ -159,7 +159,7 @@ def test_pooled_batch_session_matches_full_features(
     expected = encoder.extract(prepared)
     np.testing.assert_array_equal(encoder.features(prepared), expected.features)
     with medmlx.load_model(model=MODEL_IDS[family], weights_path=folder) as session:
-        full = list(session.extract_batch(image_paths=images, output_dirs=folders, batch_size=2))
+        full = list(session.run_batch(image_paths=images, output_dirs=folders, batch_size=2))
         for index, result in enumerate(full):
             assert result["details"]["schema_version"] == 3
             assert set(validate_outputs(result).artifacts) == set(result["outputs"])
@@ -175,7 +175,7 @@ def test_pooled_batch_session_matches_full_features(
             raise AssertionError("a loaded model reloaded its network")
 
         monkeypatch.setattr(mlx_model, "RadImageNetMlx", no_reload)
-        pooled = list(session.extract_batch(
+        pooled = list(session.run_batch(
             image_paths=images, output_dirs=folders, batch_size=2,
             output_selection="pooled", overwrite=True,
         ))
@@ -191,7 +191,7 @@ def test_pooled_batch_session_matches_full_features(
                 rtol=2e-4, atol=2e-5,
             )
     with pytest.raises(RuntimeError, match="closed"):
-        session.extract(image_path=images[0], output_dir=str(tmp_path / "closed"))
+        session.run(image_path=images[0], output_dir=str(tmp_path / "closed"))
 
 
 @pytest.mark.metal
@@ -203,14 +203,14 @@ def test_batch_runner_honors_fixed_checkpoint_batch(tmp_path: Path) -> None:
     _application_checkpoint(checkpoint, Architecture.RESNET50, fixed_shape=True, batch=2)
     images = [str(write_png(tmp_path, case)) for case in ("rgb", "gray")]
     with medmlx.load_model(model="radimagenet-resnet50", weights_path=str(folder)) as loaded:
-        results = list(loaded.extract_batch(
+        results = list(loaded.run_batch(
             image_paths=images, output_dirs=[str(tmp_path / f"fixed-{i}") for i in range(2)],
             batch_size=3, output_selection="pooled",
         ))
         assert len(results) == 2
         assert np.load(results[0]["outputs"]["features"]).shape == (1, 2048)
         with pytest.raises(InvalidInputError, match="fixed checkpoint batch"):
-            list(loaded.extract_batch(
+            list(loaded.run_batch(
                 image_paths=images[:1], output_dirs=[str(tmp_path / "tail")], batch_size=3,
             ))
 
@@ -238,7 +238,7 @@ def test_batch_paths_reject_cross_job_collisions_before_weights(
     (weights / medmlx.CHECKPOINT_FILES[Architecture.RESNET50]).write_bytes(b"unread")
     loaded = medmlx.load_model(model="radimagenet-resnet50", weights_path=str(weights))
     with pytest.raises(InvalidInputError):
-        list(loaded.extract_batch(
+        list(loaded.run_batch(
             image_paths=[str(path) for path in images], output_dirs=[str(path) for path in folders],
             batch_size=0 if problem == "bound" else 2, overwrite=True,
         ))

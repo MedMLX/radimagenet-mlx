@@ -216,7 +216,7 @@ def test_registered_runner_writes_features(tmp_path: Path, runner: str) -> None:
         image.write_bytes(payload["png::rgb"].tobytes())
     folder.mkdir()
     checkpoint(folder / WEIGHTS[runner], recipe(runner, "spatial"))
-    result = medmlx.extract(
+    result = medmlx.run(
         model=cast(medmlx.ModelId, f"radimagenet-{runner}"), image_path=str(image),
         output_dir=str(tmp_path / "out"), weights_path=str(folder),
     )

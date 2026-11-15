@@ -37,14 +37,14 @@ if TYPE_CHECKING:
 
 
 def _declaration(model_id: str, label: str, peak_memory_gb: float) -> dict[str, str | float]:
-    """Build the MedMLX registration for one backbone; all share ``extract``.
+    """Build the MedMLX registration for one backbone; all share ``run``.
 
     ``peak_memory_gb`` is the measured MLX peak for a 1929x2207 chest radiograph.
     MedMLX reports it next to available memory but never refuses a run on it.
     """
     return {
         "id": model_id, "label": label, "task": "feature-extraction",
-        "run": "radimagenet_mlx.medmlx:extract",
+        "run": "radimagenet_mlx.medmlx:run",
         "cohort": "radimagenet_mlx.medmlx:load_model",
         "summary": f"Radiology-pretrained {label} features for one 2D image.",
         "peak_memory_gb": peak_memory_gb,
@@ -70,7 +70,7 @@ ARCHITECTURES: dict[str, Architecture] = {
 }
 
 
-# Default (height, width) of ``prepare_image``. ``extract`` uses the checkpoint's fixed
+# Default (height, width) of ``prepare_image``. ``run`` uses the checkpoint's fixed
 # input size, falling back to 224 x 224 (ResNet50, DenseNet121) or 299 x 299 (Inception).
 INPUT_SIZE = (224, 224)
 # Every role is reserved on each run; roles a run does not write are removed.
@@ -204,8 +204,8 @@ class RadImageNetModel:
 
     The weights folder is resolved (downloading it if omitted) when the model is
     created; the network loads after the first image decodes. A checkpoint file
-    changed after that is refused. :meth:`extract` has the :func:`extract` contract
-    without ``model`` and ``weights_path``; :meth:`extract_batch` bounds decoded
+    changed after that is refused. :meth:`run` has the :func:`run` contract
+    without ``model`` and ``weights_path``; :meth:`run_batch` bounds decoded
     images and native activations by ``batch_size``.
     """
 
@@ -249,11 +249,11 @@ class RadImageNetModel:
             self._encoder = RadImageNetMlx(self.checkpoint, architecture=self._architecture)
         return self._encoder
 
-    def extract(
+    def run(
         self, *, image_path: PathLike, output_dir: PathLike,
         output_selection: OutputSelection = "all", overwrite: bool = False,
     ) -> RunResult:
-        """Write one image's features with the loaded network; see :func:`extract`."""
+        """Write one image's features with the loaded network; see :func:`run`."""
         selected = _selection(output_selection)
         source = input_file("image_path", image_path)
         targets = output_targets(
@@ -262,11 +262,11 @@ class RadImageNetModel:
         with _decode_image(source) as decoded:
             return _extract_image(self._network(), self.checkpoint, decoded, targets, selected)
 
-    def extract_batch(
+    def run_batch(
         self, *, image_paths: Sequence[PathLike], output_dirs: Sequence[PathLike],
         batch_size: int = 8, output_selection: OutputSelection = "all", overwrite: bool = False,
     ) -> Iterator[RunResult]:
-        """Stream model batches, yielding one :func:`extract` result per image in order.
+        """Stream model batches, yielding one :func:`run` result per image in order.
 
         ``output_dirs`` gives one distinct folder per image; every path is checked
         before the first output is replaced. Fixed-batch checkpoints use their
@@ -320,7 +320,7 @@ class RadImageNetModel:
 def load_model(*, model: ModelId, weights_path: PathLike | None = None) -> RadImageNetModel:
     """Load one RadImageNet backbone for several images, or for a MedMLX cohort.
 
-    ``model`` and ``weights_path`` have the meanings they have in :func:`extract`.
+    ``model`` and ``weights_path`` have the meanings they have in :func:`run`.
     Close the returned model, or use it as a context manager, to release it.
     """
     return RadImageNetModel(model=model, weights_path=weights_path)
@@ -336,7 +336,7 @@ def _infer(
     return result.features, result.spatial, result.predictions
 
 
-def extract(
+def run(
     *,
     model: ModelId,
     image_path: PathLike,

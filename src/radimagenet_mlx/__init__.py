@@ -20,9 +20,9 @@ if TYPE_CHECKING:
     from radimagenet_mlx.inception_v3_model import (
         RadImageNetInceptionV3Mlx as RadImageNetInceptionV3Mlx,
     )
-    from radimagenet_mlx.medmlx import extract as extract
     from radimagenet_mlx.medmlx import load_model as load_model
     from radimagenet_mlx.medmlx import prepare_image as prepare_image
+    from radimagenet_mlx.medmlx import run as run
     from radimagenet_mlx.mlx_model import OUTPUT_LAYER as OUTPUT_LAYER
     from radimagenet_mlx.mlx_model import RadImageNetMlx as RadImageNetMlx
     from radimagenet_mlx.mlx_model import RadImageNetResNet50Mlx as RadImageNetResNet50Mlx
@@ -39,7 +39,7 @@ _EXPORTS = {
     "RadImageNetInceptionV3Mlx": "radimagenet_mlx.inception_v3_model",
     "RadImageNetResNet50Mlx": "radimagenet_mlx.mlx_model",
     "global_average_pool": "radimagenet_mlx.features",
-    "extract": "radimagenet_mlx.medmlx",
+    "run": "radimagenet_mlx.medmlx",
     "load_model": "radimagenet_mlx.medmlx",
     "prepare_image": "radimagenet_mlx.medmlx",
 }
@@ -53,10 +53,10 @@ __all__ = [
     "RadImageNetInceptionV3Mlx",
     "RadImageNetMlx",
     "RadImageNetResNet50Mlx",
-    "extract",
     "global_average_pool",
     "load_model",
     "prepare_image",
+    "run",
 ]
 
 

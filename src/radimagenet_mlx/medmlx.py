@@ -104,6 +104,10 @@ def prepare_image(path: Path, size: tuple[int, int] = INPUT_SIZE) -> FloatArray:
     and ``rescale=1./255``: ``preprocess_input`` (default ``mode="caffe"``) runs before
     ``rescale``. One route serves all four backbones; only ``size`` differs.
 
+    The RGB step is Pillow's ``convert("RGB")``, as in Keras ``load_img``: 16-bit,
+    32-bit and float pixels are clipped to 0-255 without rescaling (a 16-bit
+    radiograph becomes almost uniformly 255), so pass 8-bit images.
+
     Raises:
         InvalidInputError: If Pillow cannot read ``path`` as a 2D image.
     """

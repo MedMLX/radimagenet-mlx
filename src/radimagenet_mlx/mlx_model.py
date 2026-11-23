@@ -8,11 +8,12 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
 from medmlx_core.errors import AssetNotReadyError
+from medmlx_core.typing import ArrayLayer
 
 from radimagenet_mlx._runtime import import_mlx
-from radimagenet_mlx._typing import ArrayRuntime, FloatArray, HostArray
+from radimagenet_mlx._typing import FloatArray, HostArray
 from radimagenet_mlx.checkpoint import load_native_checkpoint
-from radimagenet_mlx.features import MeanRuntime, native_average_pool
+from radimagenet_mlx.features import native_average_pool
 from radimagenet_mlx.graph import (
     ARCHITECTURES,
     Activation,
@@ -39,22 +40,14 @@ mx = import_mlx()
 OUTPUT_LAYER = ARCHITECTURES[Architecture.RESNET50].spatial
 
 
-class PoolFunction(Protocol):
-    """An MLX pooling layer that maps one NHWC tensor to one tensor."""
-
-    def __call__(self, value: array) -> array:
-        """Apply a pooling layer to an MLX array."""
-        ...
-
-
 class PoolRuntime(Protocol):
     """Subset of ``mlx.nn`` used to construct average and max pooling layers."""
 
-    def AvgPool2d(self, kernel: tuple[int, int], stride: tuple[int, int]) -> PoolFunction:
+    def AvgPool2d(self, kernel: tuple[int, int], stride: tuple[int, int]) -> ArrayLayer:
         """Construct an MLX average-pooling layer."""
         ...
 
-    def MaxPool2d(self, kernel: tuple[int, int], stride: tuple[int, int]) -> PoolFunction:
+    def MaxPool2d(self, kernel: tuple[int, int], stride: tuple[int, int]) -> ArrayLayer:
         """Construct an MLX max-pooling layer."""
         ...
 
@@ -143,7 +136,7 @@ class RadImageNetMlx:
                 if node.operation.scale:
                     scale = scale * self.weights[f"{node.name}/gamma"]
                 self._batch_norm_scales[node.name] = scale
-        cast(ArrayRuntime, mx).eval(*self.weights.values(), *self._batch_norm_scales.values())
+        mx.eval(*self.weights.values(), *self._batch_norm_scales.values())
 
     @property
     def has_classifier(self) -> bool:
@@ -243,7 +236,7 @@ class RadImageNetMlx:
         ``C`` is 1024, 1536 or 2048 depending on the architecture.
         """
         output = self._forward(images, self.graph.spatial)[0]
-        cast(ArrayRuntime, mx).eval(output)
+        mx.eval(output)
         return np.asarray(output, dtype=np.float32).copy()
 
     def extract(self, images: HostArray) -> Inference:
@@ -254,8 +247,8 @@ class RadImageNetMlx:
         """
         target = self.graph.output if self.has_classifier else self.graph.spatial
         output, spatial = self._forward(images, target)
-        pooled = native_average_pool(spatial, cast(MeanRuntime, mx))
-        cast(ArrayRuntime, mx).eval(spatial, pooled, output)
+        pooled = native_average_pool(spatial, mx)
+        mx.eval(spatial, pooled, output)
         predictions = np.asarray(output, dtype=np.float32).copy() if self.has_classifier else None
         return Inference(
             np.asarray(spatial, dtype=np.float32).copy(),
@@ -266,9 +259,9 @@ class RadImageNetMlx:
     def features(self, images: HostArray) -> FloatArray:
         """Return global-average-pooled backbone features, float32 ``(B, C)``."""
         value = native_average_pool(
-            self._forward(images, self.graph.spatial)[0], cast(MeanRuntime, mx)
+            self._forward(images, self.graph.spatial)[0], mx
         )
-        cast(ArrayRuntime, mx).eval(value)
+        mx.eval(value)
         return np.asarray(value, dtype=np.float32).copy()
 
     def predict(self, images: HostArray) -> FloatArray:
@@ -280,7 +273,7 @@ class RadImageNetMlx:
         if not self.has_classifier:
             raise AssetNotReadyError("This no-top checkpoint has no supplied trained classifier")
         output = self._forward(images, self.graph.output)[0]
-        cast(ArrayRuntime, mx).eval(output)
+        mx.eval(output)
         return np.asarray(output, dtype=np.float32).copy()
 
     def __call__(self, images: HostArray) -> FloatArray:

@@ -20,7 +20,7 @@ import numpy as np
 from medmlx_core.errors import AssetNotReadyError, InvalidInputError
 from medmlx_core.files import PathLike, input_file, output_targets, publish
 from medmlx_core.outputs import Artifact, artifact
-from medmlx_core.weights import model_folder, weights_revision
+from medmlx_core.weights import weights_file, weights_revision
 from PIL import Image
 
 from radimagenet_mlx._typing import (
@@ -104,6 +104,10 @@ def prepare_image(path: Path, size: tuple[int, int] = INPUT_SIZE) -> FloatArray:
     and ``rescale=1./255``: ``preprocess_input`` (default ``mode="caffe"``) runs before
     ``rescale``. One route serves all four backbones; only ``size`` differs.
 
+    The RGB step is Pillow's ``convert("RGB")``, as in Keras ``load_img``: 16-bit,
+    32-bit and float pixels are clipped to 0-255 without rescaling (a 16-bit
+    radiograph becomes almost uniformly 255), so pass 8-bit images.
+
     Raises:
         InvalidInputError: If Pillow cannot read ``path`` as a 2D image.
     """
@@ -152,14 +156,7 @@ def _selection(value: str) -> OutputSelection:
 
 def _checkpoint(model: str, architecture: Architecture, weights_path: PathLike | None) -> Path:
     """Return the backbone's file in its weights folder, downloading the folder if omitted."""
-    path = model_folder(model, weights_path) / CHECKPOINT_FILES[architecture]
-    if not path.is_file():
-        raise AssetNotReadyError(
-            f"RadImageNet weights folder must contain {path.name}: {path.parent}",
-            reason=f"missing {path.name}",
-            hint="Run medmlx setup, or pass a weights_path folder that contains it.",
-        )
-    return path
+    return weights_file(model, weights_path, CHECKPOINT_FILES[architecture])
 
 
 def _path_ids(path: Path) -> set[Path | tuple[int, int]]:

@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import platform
+from typing import cast
 
 from medmlx_core.errors import MissingDependencyError
 from medmlx_core.runtime import import_mlx as import_core_mlx
+from medmlx_core.typing import MlxRuntime
 
 _RUNTIME_HINT = "Install medmlx-core and use macOS arm64 with an available Metal GPU."
 
 
-def import_mlx():
+def import_mlx() -> MlxRuntime:
     """Require macOS arm64, then let medmlx-core select and verify Metal."""
 
     system, machine = platform.system(), platform.machine()
@@ -20,10 +22,7 @@ def import_mlx():
             hint=_RUNTIME_HINT,
         )
     try:
-        import_core_mlx()
-        import mlx.core as mx
-
-        return mx
+        return cast(MlxRuntime, import_core_mlx())
     except MissingDependencyError as error:
         raise MissingDependencyError(
             f"RadImageNet requires MLX on Metal: {error}", hint=_RUNTIME_HINT,

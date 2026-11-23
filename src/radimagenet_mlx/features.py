@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
+from medmlx_core.typing import MlxRuntime
 
 from radimagenet_mlx._runtime import import_mlx
-from radimagenet_mlx._typing import ArrayRuntime, FloatArray, RealArray
+from radimagenet_mlx._typing import FloatArray, RealArray
 from radimagenet_mlx.graph import ARCHITECTURES
 
 if TYPE_CHECKING:
@@ -17,15 +18,7 @@ if TYPE_CHECKING:
 POOLED_OUTPUT_LAYER = "avg_pool"
 
 
-class MeanRuntime(Protocol):
-    """Subset of the MLX module used for spatial mean reduction."""
-
-    def mean(self, values: array, *, axis: tuple[int, int]) -> array:
-        """Reduce an MLX tensor across the requested spatial axes."""
-        ...
-
-
-def native_average_pool(spatial: array, runtime: MeanRuntime) -> array:
+def native_average_pool(spatial: array, runtime: MlxRuntime) -> array:
     """Keras NHWC GlobalAveragePooling2D, evaluated by callers on Metal."""
     return runtime.mean(spatial, axis=(1, 2))
 
@@ -50,7 +43,7 @@ def global_average_pool(spatial_features: RealArray) -> FloatArray:
         )
     mx = import_mlx()
     value = native_average_pool(
-        mx.array(np.asarray(spatial_features, dtype=np.float32)), cast(MeanRuntime, mx)
+        mx.array(np.asarray(spatial_features, dtype=np.float32)), mx
     )
-    cast(ArrayRuntime, mx).eval(value)
+    mx.eval(value)
     return np.asarray(value, dtype=np.float32).copy()

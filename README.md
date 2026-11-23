@@ -84,6 +84,9 @@ The published checkpoints declare 224×224 inputs:
 - **Preprocessing** follows the upstream RadImageNet example: RGB, nearest-neighbor
   resize to the checkpoint's input size, Caffe-style BGR mean subtraction, then scaling
   by 1/255.
+- **8-bit images only:** the RGB step is Pillow's conversion, as in Keras. It clips
+  16-bit, 32-bit and float pixels to 0–255 without rescaling, so a 16-bit radiograph
+  becomes almost uniformly white. Save such images as 8-bit first.
 - Output paths must differ from the input and from each other.
 - Missing or unreadable images raise `InvalidInputError`; missing or mismatched weights
   raise `AssetNotReadyError`.

@@ -2,26 +2,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NotRequired, Protocol, TypedDict
+from typing import NotRequired, TypedDict
 
 import numpy as np
 from medmlx_core.outputs import RunResult as _RunResult
 from numpy.typing import NDArray
-
-if TYPE_CHECKING:
-    from mlx.core import array
 
 type HostArray = NDArray[np.generic]
 type FloatArray = NDArray[np.float32]
 type RealArray = NDArray[np.bool_ | np.integer | np.floating]
 type JsonValue = bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
 type JsonObject = dict[str, JsonValue]
-
-
-class ArrayRuntime(Protocol):
-    def eval(self, *arrays: array) -> None:
-        """Evaluate the supplied MLX arrays."""
-        ...
 
 
 class LayerConfig(TypedDict):

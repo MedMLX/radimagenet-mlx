@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from medmlx_core.errors import AssetNotReadyError
@@ -25,31 +25,7 @@ from radimagenet_mlx.graph import (
 )
 
 if TYPE_CHECKING:
-    from mlx.core import Dtype, array
-
-
-class SafetensorsRuntime(Protocol):
-    """Subset of the MLX module used to read safetensors weights and metadata."""
-
-    float32: Dtype
-
-    def all(self, values: array) -> array:
-        """Reduce Boolean admission flags on the device."""
-        ...
-
-    def isfinite(self, values: array) -> array:
-        """Check native parameter finiteness."""
-        ...
-
-    def eval(self, *values: array) -> None:
-        """Evaluate parameters and admission flags together."""
-        ...
-
-    def load(
-        self, file: str, /, format: Literal["safetensors"], return_metadata: Literal[True]
-    ) -> tuple[dict[str, array], dict[str, object]]:
-        """Load named tensors and metadata from a safetensors file."""
-        ...
+    from mlx.core import array
 
 
 @dataclass(frozen=True)
@@ -146,7 +122,7 @@ def _shapes(graph: Graph) -> dict[str, dict[str, tuple[int, ...]]]:
 
 def _load_native_safetensors(path: Path) -> NativeCheckpoint:
     """Load declarative graph metadata and finite FP32 tensors in MLX layout."""
-    mx = cast(SafetensorsRuntime, import_mlx())
+    mx = import_mlx()
     try:
         tensors, metadata = mx.load(str(path), format="safetensors", return_metadata=True)
         raw = metadata.get("model_config")

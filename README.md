@@ -84,7 +84,7 @@ The published checkpoints declare 224×224 inputs:
 - **Preprocessing** follows the upstream RadImageNet example: RGB, nearest-neighbor
   resize to the checkpoint's input size, Caffe-style BGR mean subtraction, then scaling
   by 1/255.
-- Outputs that alias the input or each other are refused.
+- Output paths must differ from the input and from each other.
 - Missing or unreadable images raise `InvalidInputError`; missing or mismatched weights
   raise `AssetNotReadyError`.
 
@@ -109,8 +109,8 @@ with load_model(model="radimagenet-resnet50") as model:
         print(result["outputs"]["features"])
 ```
 
-Fixed-batch checkpoints use their declared batch size; it must fit `batch_size` and
-divide the image count.
+A checkpoint with a fixed batch size uses that size: it must not exceed `batch_size`
+and must divide the number of images.
 
 ### Local weights
 
@@ -162,7 +162,6 @@ spatial = encoder.spatial_features(images)  # (1, 7, 7, 2048)
   DenseNet121 and 299×299 for the Inception families (minimum 32 and 75).
 - The loader reads graph metadata and float32 tensors without running Keras or
   serialized Python.
-- Inference requires Apple Silicon with Metal.
 
 ## Use with MedMLX
 
